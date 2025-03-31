@@ -1,0 +1,881 @@
+import { WebSocketServer, WebSocket } from 'ws';
+import { createServer } from 'http';
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+// Fix for __dirname in ES modules
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+// Path for storing the leaderboard
+const LEADERBOARD_FILE = path.join(__dirname, 'leaderboard.json');
+
+// Default word list
+const DEFAULT_WORDS = [
+  "cat", "dog", "house", "tree", "car", "bicycle", "sun", "moon", "star", "flower",
+  "bird", "fish", "book", "computer", "phone", "chair", "table", "door", "window",
+  "cloud", "rain", "snow", "mountain", "beach", "ocean", "bridge", "train", "bus",
+  "airplane", "rocket", "robot", "monster", "ghost", "dragon", "unicorn", "castle",
+  "pizza", "hamburger", "ice cream", "cake", "cookie", "apple", "banana", "guitar",
+  "piano", "camera", "hat", "shirt", "shoes", "bag", "key", "lock", "pen", "pencil"
+];
+
+// Default game settings
+const DEFAULT_SETTINGS = {
+  timePerRound: 60,
+  customWords: null,
+  useOnlyCustomWords: false,
+  minRounds: 1,
+  maxRounds: 100
+};
+
+// Load leaderboard from file or create new one
+function loadLeaderboard() {
+  try {
+    if (fs.existsSync(LEADERBOARD_FILE)) {
+      const data = fs.readFileSync(LEADERBOARD_FILE, 'utf8');
+      return JSON.parse(data);
+    }
+  } catch (error) {
+    console.error('Error loading leaderboard:', error);
+  }
+  
+  return [];
+}
+
+// Save leaderboard to file
+function saveLeaderboard(leaderboard) {
+  try {
+    const data = JSON.stringify(leaderboard, null, 2);
+    fs.writeFileSync(LEADERBOARD_FILE, data, 'utf8');
+  } catch (error) {
+    console.error('Error saving leaderboard:', error);
+  }
+}
+
+// Update player's entry in the global leaderboard
+function updateLeaderboard(playerName, score, wordsGuessed) {
+  const leaderboard = loadLeaderboard();
+  const existingEntry = leaderboard.find(entry => entry.playerName === playerName);
+  
+  if (existingEntry) {
+    existingEntry.score += score;
+    existingEntry.gamesPlayed += 1;
+    existingEntry.wordsGuessed += wordsGuessed;
+    existingEntry.date = new Date().toISOString();
+  } else {
+    leaderboard.push({
+      playerName,
+      score,
+      gamesPlayed: 1,
+      wordsGuessed,
+      date: new Date().toISOString()
+    });
+  }
+  
+  saveLeaderboard(leaderboard);
+}
+
+// Get top 10 players from leaderboard
+function getTopPlayers(count = 10) {
+  const leaderboard = loadLeaderboard();
+  return leaderboard.sort((a, b) => b.score - a.score).slice(0, count);
+}
+
+const server = createServer((req, res) => {
+  // Handle CORS preflight requests
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+  
+  if (req.method === "OPTIONS") {
+    res.writeHead(200);
+    res.end();
+  } else if (req.url === "/leaderboard" && req.method === "GET") {
+    // Endpoint to get the top players
+    const topPlayers = getTopPlayers();
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(topPlayers));
+  } else {
+    res.writeHead(404);
+    res.end();
+  }
+});
+
+const wss = new WebSocketServer({ server });
+const rooms = new Map();
+
+// Timer functions
+function startTimer(room) {
+  // Record when the round started
+  room.roundStartTime = Date.now();
+  
+  // Set initial round time based on settings
+  room.timeLeft = room.settings.timePerRound;
+  
+  // Send time update to all players
+  broadcastTimeUpdate(room);
+  
+  // Set interval to update time every second
+  const timerInterval = setInterval(() => {
+    room.timeLeft--;
+    broadcastTimeUpdate(room);
+    
+    if (room.timeLeft <= 0) {
+      clearInterval(timerInterval);
+      endRound(room);
+    }
+  }, 1000);
+  
+  // Store timer reference for cleanup
+  room.roundTimer = timerInterval;
+}
+
+function broadcastTimeUpdate(room) {
+  room.players.forEach(player => {
+    if (player.ws.readyState === WebSocket.OPEN) {
+      player.ws.send(JSON.stringify({
+        type: "timeUpdate",
+        timeLeft: room.timeLeft
+      }));
+    }
+  });
+}
+
+function getWordForRound(room) {
+  // Determine which word list to use
+  let wordList = DEFAULT_WORDS;
+  
+  // If custom words exist and useOnlyCustomWords is true, use only custom words
+  if (room.settings.customWords && room.settings.customWords.length > 0) {
+    if (room.settings.useOnlyCustomWords) {
+      wordList = room.settings.customWords;
+    } else {
+      // Otherwise, combine default and custom words
+      wordList = [...DEFAULT_WORDS, ...room.settings.customWords];
+    }
+  }
+  
+  return wordList[Math.floor(Math.random() * wordList.length)];
+}
+
+function startNewTurn(room) {
+  // Reset all players' correctGuess status
+  room.players.forEach(player => {
+    player.correctGuess = false;
+    player.guessTime = undefined;
+  });
+  
+  // Clear previous timer if exists
+  if (room.roundTimer) {
+    clearTimeout(room.roundTimer);
+    room.roundTimer = null;
+  }
+
+  // Select next drawer - ensure each player gets a turn
+  let nextDrawerIndex = 0;
+  
+  if (room.currentDrawer) {
+    const currentDrawerIndex = room.players.findIndex(p => p === room.currentDrawer);
+    if (currentDrawerIndex !== -1) {
+      nextDrawerIndex = (currentDrawerIndex + 1) % room.players.length;
+    }
+  }
+  
+  room.currentDrawer = room.players[nextDrawerIndex];
+  console.log(`New drawer selected: ${room.currentDrawer.name} (Turn ${nextDrawerIndex + 1} of Round ${room.roundNumber + 1})`);
+
+  // Select random word
+  const randomWord = getWordForRound(room);
+  room.currentWord = randomWord;
+
+  // Notify drawer of their word
+  if (room.currentDrawer && room.currentDrawer.ws.readyState === WebSocket.OPEN) {
+    room.currentDrawer.ws.send(JSON.stringify({
+      type: "yourWord",
+      word: randomWord
+    }));
+  }
+
+  // Notify all players of new drawer and clear their canvases
+  room.players.forEach(player => {
+    if (player.ws.readyState === WebSocket.OPEN) {
+      player.ws.send(JSON.stringify({
+        type: "newDrawer",
+        drawer: room.currentDrawer ? room.currentDrawer.name : null
+      }));
+      
+      // Clear canvas for all players
+      player.ws.send(JSON.stringify({
+        type: "clear"
+      }));
+    }
+  });
+
+  // Mark round as active
+  room.isRoundActive = true;
+  
+  // Start round timer
+  startTimer(room);
+}
+
+function checkAllPlayersReady(room) {
+  return room.players.length >= 2 && room.players.every(player => player.isReady);
+}
+
+function checkAllPlayersGuessed(room) {
+  // Check if all non-drawer players have guessed correctly
+  const nonDrawerPlayers = room.players.filter(p => p !== room.currentDrawer);
+  return nonDrawerPlayers.every(p => p.correctGuess);
+}
+
+function tryStartGame(room) {
+  if (checkAllPlayersReady(room) && !room.isRoundActive) {
+    broadcastSystemMessage(room, "All players are ready! Starting the game...");
+    
+    // Reset scores before starting a new game
+    room.players.forEach(player => {
+      player.score = 0;
+    });
+    
+    // Reset round number
+    room.roundNumber = 0;
+    
+    setTimeout(() => startNewTurn(room), 3000);
+  }
+}
+
+function broadcastSystemMessage(room, message) {
+  room.players.forEach(player => {
+    if (player.ws.readyState === WebSocket.OPEN) {
+      player.ws.send(JSON.stringify({
+        type: "system",
+        content: message
+      }));
+    }
+  });
+}
+
+function endRound(room) {
+  // Clear timer
+  if (room.roundTimer) {
+    clearTimeout(room.roundTimer);
+    room.roundTimer = null;
+  }
+
+  // Mark round as inactive
+  room.isRoundActive = false;
+
+  const correctGuessers = room.players
+    .filter(p => p.correctGuess && p !== room.currentDrawer)
+    .map(p => ({
+      name: p.name,
+      time: p.guessTime || 0
+    }));
+
+  // Reveal the word to all players
+  room.players.forEach(player => {
+    if (player.ws.readyState === WebSocket.OPEN) {
+      player.ws.send(JSON.stringify({
+        type: "roundEnd",
+        word: room.currentWord,
+        correctGuessers
+      }));
+    }
+  });
+
+  // Get the current drawer index
+  const currentDrawerIndex = room.players.findIndex(p => p === room.currentDrawer);
+  
+  // Check if this was the last drawer in the current round
+  const isLastDrawerInRound = currentDrawerIndex === room.players.length - 1 || currentDrawerIndex === -1;
+  
+  // Clear current word
+  room.currentWord = null;
+  
+  // If this was the last drawer in the round, increment the round number
+  if (isLastDrawerInRound) {
+    room.roundNumber++;
+    // Broadcast round completion
+    broadcastSystemMessage(room, `Round ${room.roundNumber} completed!`);
+  }
+
+  // Check if game is over (all rounds completed)
+  if (room.roundNumber >= room.settings.maxRounds) {
+    endGame(room);
+  } else {
+    // Start new turn after a short delay
+    setTimeout(() => startNewTurn(room), 5000);
+  }
+}
+
+function endGame(room) {
+  // Clear timer
+  if (room.roundTimer) {
+    clearTimeout(room.roundTimer);
+    room.roundTimer = null;
+  }
+
+  // Prepare final scores and update leaderboard
+  const scores = room.players.map(p => {
+    // Calculate words guessed by this player
+    const wordsGuessed = p.correctGuess ? 1 : 0;
+    
+    // Update global leaderboard
+    updateLeaderboard(p.name, p.score, wordsGuessed);
+    
+    return {
+      name: p.name,
+      score: p.score
+    };
+  });
+  
+  // Sort scores to find the winner
+  const sortedScores = [...scores].sort((a, b) => b.score - a.score);
+  const winner = sortedScores.length > 0 ? sortedScores[0] : null;
+  
+  // Get top global scores for comparison
+  const globalTopScores = getTopPlayers(5);
+
+  // Send final scores to all players
+  room.players.forEach(player => {
+    if (player.ws.readyState === WebSocket.OPEN) {
+      player.ws.send(JSON.stringify({
+        type: "gameEnd",
+        scores: sortedScores,
+        winner: winner ? winner.name : null,
+        globalTopScores
+      }));
+    }
+  });
+
+  // Reset room state
+  room.roundNumber = 0;
+  room.currentDrawer = null;
+  room.currentWord = null;
+  room.isRoundActive = false;
+  
+  // Reset player ready states
+  room.players.forEach(player => {
+    player.isReady = false;
+    player.correctGuess = false;
+    player.guessTime = undefined;
+  });
+  
+  // Notify players they need to ready up for a new game
+  broadcastSystemMessage(room, "Game over! Press 'Ready' to start a new game.");
+}
+
+wss.on("connection", (ws, req) => {
+  console.log("New connection attempt from", req.socket.remoteAddress);
+
+  let currentRoom = null;
+  let currentPlayer = null;
+
+  // Send heartbeat to detect disconnections quickly
+  const pingInterval = setInterval(() => {
+    if (ws.readyState === WebSocket.OPEN) {
+      ws.ping();
+    }
+  }, 30000);
+
+  ws.on("message", (message) => {
+    try {
+      const data = JSON.parse(message);
+      
+      switch (data.type) {
+        case "join": {
+          const roomId = data.roomId;
+          console.log(`Player ${data.playerName} joining room ${roomId}`);
+          
+          // Check if player already exists in the room
+          const existingRoom = rooms.get(roomId);
+          if (existingRoom) {
+            // Check if game is in progress and player is not rejoining
+            if (existingRoom.isRoundActive) {
+              const existingPlayer = existingRoom.players.find(p => p.name === data.playerName);
+              if (!existingPlayer) {
+                // New player trying to join an active game
+                if (ws.readyState === WebSocket.OPEN) {
+                  ws.send(JSON.stringify({ 
+                    type: "error", 
+                    message: "Cannot join a game in progress. Please try another room or wait until this game ends."
+                  }));
+                }
+                return;
+              }
+            }
+            
+            const existingPlayer = existingRoom.players.find(p => p.name === data.playerName);
+            if (existingPlayer) {
+              console.log(`Player ${data.playerName} reconnecting to room ${roomId}`);
+              // Update WebSocket reference for existing player
+              existingPlayer.ws = ws;
+              currentPlayer = existingPlayer;
+              currentRoom = existingRoom;
+              
+              // Send current game state to reconnecting player
+              if (ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ type: "joined", roomId }));
+                ws.send(JSON.stringify({
+                  type: "playerList",
+                  players: existingRoom.players.map(p => ({
+                    name: p.name,
+                    score: p.score,
+                    isReady: p.isReady
+                  }))
+                }));
+                
+                // Send current game settings
+                ws.send(JSON.stringify({
+                  type: "gameSettings",
+                  settings: existingRoom.settings
+                }));
+                
+                if (existingRoom.isRoundActive) {
+                  if (existingRoom.currentDrawer) {
+                    ws.send(JSON.stringify({
+                      type: "newDrawer",
+                      drawer: existingRoom.currentDrawer.name
+                    }));
+                    
+                    if (existingRoom.currentDrawer === currentPlayer) {
+                      ws.send(JSON.stringify({
+                        type: "yourWord",
+                        word: existingRoom.currentWord
+                      }));
+                    }
+                  }
+                  
+                  ws.send(JSON.stringify({
+                    type: "timeUpdate",
+                    timeLeft: existingRoom.timeLeft
+                  }));
+                }
+              }
+              
+              // Notify other players of reconnection
+              existingRoom.players.forEach(player => {
+                if (player !== currentPlayer && player.ws.readyState === WebSocket.OPEN) {
+                  player.ws.send(JSON.stringify({
+                    type: "system",
+                    content: `${currentPlayer ? currentPlayer.name : ""} reconnected to the game`
+                  }));
+                }
+              });
+              
+              return;
+            }
+          }
+
+          // Create new player
+          currentPlayer = { 
+            name: data.playerName, 
+            score: 0, 
+            ws, 
+            isReady: false, 
+            correctGuess: false 
+          };
+          
+          // Create new room if it doesn't exist
+          if (!rooms.has(roomId)) {
+            console.log(`Creating new room ${roomId}`);
+            rooms.set(roomId, {
+              roomId,
+              players: [],
+              currentDrawer: null,
+              currentWord: null,
+              roundNumber: 0,
+              settings: {...DEFAULT_SETTINGS},
+              roundTimer: null,
+              timeLeft: 0,
+              isRoundActive: false
+            });
+          }
+          
+          currentRoom = rooms.get(roomId);
+          currentRoom.players.push(currentPlayer);
+
+          // Send confirmation to client
+          if (ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ 
+              type: "joined", 
+              roomId 
+            }));
+            
+            // Send current player list to the new player
+            ws.send(JSON.stringify({
+              type: "playerList",
+              players: currentRoom.players.map(p => ({
+                name: p.name,
+                score: p.score,
+                isReady: p.isReady
+              }))
+            }));
+            
+            // Send current game settings
+            ws.send(JSON.stringify({
+              type: "gameSettings",
+              settings: currentRoom.settings
+            }));
+          }
+          
+          // Notify all players of new player
+          if (currentRoom) {
+            currentRoom.players.forEach(player => {
+              if (player !== currentPlayer && player.ws.readyState === WebSocket.OPEN) {
+                player.ws.send(JSON.stringify({
+                  type: "system",
+                  content: `${currentPlayer ? currentPlayer.name : ""} joined the game`
+                }));
+                
+                // Update player list for all players
+                player.ws.send(JSON.stringify({
+                  type: "playerList",
+                  players: currentRoom.players.map(p => ({
+                    name: p.name,
+                    score: p.score,
+                    isReady: p.isReady
+                  }))
+                }));
+              }
+            });
+          }
+          
+          break;
+        }
+        
+        case "gameSettings": {
+          if (!currentRoom || !currentPlayer) return;
+          
+          // Only allow settings changes when no game is in progress
+          if (currentRoom.isRoundActive) return;
+          
+          // Validate settings
+          const newSettings = { ...data.settings };
+          
+          // Ensure maxRounds is within valid range
+          if (newSettings.maxRounds < 1) newSettings.maxRounds = 1;
+          if (newSettings.maxRounds > 100) newSettings.maxRounds = 100;
+          
+          // Update room settings
+          currentRoom.settings = newSettings;
+          
+          // Notify all players of settings change
+          currentRoom.players.forEach(player => {
+            if (player.ws.readyState === WebSocket.OPEN) {
+              player.ws.send(JSON.stringify({
+                type: "gameSettings",
+                settings: currentRoom.settings
+              }));
+            }
+          });
+          
+          // Notify of settings change
+          if (currentRoom && currentPlayer) {
+            broadcastSystemMessage(currentRoom, `${currentPlayer.name} updated the game settings`);
+          }
+          
+          break;
+        }
+        
+        case "ready": {
+          if (!currentRoom || !currentPlayer) return;
+          
+          // Update player's ready status
+          currentPlayer.isReady = data.isReady;
+          
+          // Notify all players of the ready status change
+          currentRoom.players.forEach(player => {
+            if (player.ws.readyState === WebSocket.OPEN) {
+              player.ws.send(JSON.stringify({
+                type: "playerReady",
+                playerName: currentPlayer ? currentPlayer.name : "",
+                isReady: currentPlayer ? currentPlayer.isReady : false
+              }));
+            }
+          });
+          
+          // Check if all players are ready to start the game
+          if (checkAllPlayersReady(currentRoom)) {
+            tryStartGame(currentRoom);
+          }
+          
+          break;
+        }
+
+        case "pathStart": {
+          if (!currentRoom || !currentPlayer) return;
+          if (currentPlayer !== currentRoom.currentDrawer) return;
+          
+          // Forward path start data to all other players
+          currentRoom.players.forEach(player => {
+            if (player !== currentPlayer && player.ws.readyState === WebSocket.OPEN) {
+              try {
+                player.ws.send(JSON.stringify(data));
+              } catch (error) {
+                console.error(`Error sending pathStart data to ${player.name}:`, error);
+              }
+            }
+          });
+          break;
+        }
+
+        case "pathEnd": {
+          if (!currentRoom || !currentPlayer) return;
+          if (currentPlayer !== currentRoom.currentDrawer) return;
+          
+          // Forward path end data to all other players
+          currentRoom.players.forEach(player => {
+            if (player !== currentPlayer && player.ws.readyState === WebSocket.OPEN) {
+              try {
+                player.ws.send(JSON.stringify(data));
+              } catch (error) {
+                console.error(`Error sending pathEnd data to ${player.name}:`, error);
+              }
+            }
+          });
+          break;
+        }
+
+        case "draw": {
+          if (!currentRoom || !currentPlayer) return;
+          if (currentPlayer !== currentRoom.currentDrawer) return;
+          
+          // Forward drawing data to all other players
+          currentRoom.players.forEach(player => {
+            if (player !== currentPlayer && player.ws.readyState === WebSocket.OPEN) {
+              try {
+                player.ws.send(JSON.stringify(data));
+              } catch (error) {
+                console.error(`Error sending draw data to ${player.name}:`, error);
+              }
+            }
+          });
+          break;
+        }
+
+        case "clear": {
+          if (!currentRoom || !currentPlayer) return;
+          if (currentPlayer !== currentRoom.currentDrawer) return;
+          
+          currentRoom.players.forEach(player => {
+            if (player !== currentPlayer && player.ws.readyState === WebSocket.OPEN) {
+              player.ws.send(JSON.stringify(data));
+            }
+          });
+          break;
+        }
+
+        case "guess": {
+          if (!currentRoom || !currentPlayer) return;
+          if (!currentRoom.currentWord) return;
+          if (currentPlayer === currentRoom.currentDrawer || currentPlayer.correctGuess) return;
+          
+          const guess = data.guess.toLowerCase().trim();
+          const correctWord = currentRoom.currentWord.toLowerCase();
+          const isCorrect = guess === correctWord;
+
+          // Send private message to the guesser
+          if (currentPlayer.ws.readyState === WebSocket.OPEN) {
+            currentPlayer.ws.send(JSON.stringify({
+              type: "guessResult",
+              guess: data.guess,
+              isCorrect
+            }));
+          }
+
+          // Broadcast incorrect guesses (without revealing the actual guess)
+          if (!isCorrect) {
+            currentRoom.players.forEach(player => {
+              if (player !== currentPlayer && player.ws.readyState === WebSocket.OPEN) {
+                player.ws.send(JSON.stringify({
+                  type: "incorrectGuess",
+                  guesser: currentPlayer.name
+                }));
+              }
+            });
+          }
+
+          if (isCorrect) {
+            // Calculate time taken to guess (in seconds)
+            const guessTime = currentRoom.roundStartTime 
+              ? Math.floor((Date.now() - currentRoom.roundStartTime) / 1000)
+              : currentRoom.settings.timePerRound - currentRoom.timeLeft;
+              
+            // Record the time for this player
+            currentPlayer.guessTime = guessTime;
+            
+            // Mark player as having guessed correctly
+            currentPlayer.correctGuess = true;
+            
+            // Award points - more points for faster guesses
+            const timePercent = guessTime / currentRoom.settings.timePerRound;
+            const speedBonus = Math.floor((1 - timePercent) * 20); // Up to 20 bonus points for speed
+            const pointsEarned = 10 + speedBonus;
+            currentPlayer.score += pointsEarned;
+            
+            // Also award points to the drawer
+            if (currentRoom.currentDrawer) {
+              currentRoom.currentDrawer.score += 5;
+            }
+
+            // Notify all players of the correct guess (but not the word itself)
+            currentRoom.players.forEach(player => {
+              if (player.ws.readyState === WebSocket.OPEN) {
+                player.ws.send(JSON.stringify({
+                  type: "playerGuessedCorrectly",
+                  guesser: currentPlayer ? currentPlayer.name : "",
+                  pointsEarned,
+                  totalScore: currentPlayer ? currentPlayer.score : 0
+                }));
+              }
+            });
+
+            // Check if all players have guessed correctly
+            if (checkAllPlayersGuessed(currentRoom)) {
+              // End round early if everyone guessed
+              broadcastSystemMessage(currentRoom, "Everyone guessed the word! Starting next round...");
+              endRound(currentRoom);
+            }
+          }
+          break;
+        }
+        
+        case "system": {
+          // Chat messages from players to everyone
+          if (!currentRoom || !currentPlayer) return;
+          
+          currentRoom.players.forEach(player => {
+            if (player.ws.readyState === WebSocket.OPEN) {
+              player.ws.send(JSON.stringify({
+                type: "system",
+                content: `${currentPlayer ? currentPlayer.name : ""}: ${data.content}`
+              }));
+            }
+          });
+          break;
+        }
+      }
+    } catch (error) {
+      console.error("Error processing message:", error);
+      // Send error feedback to client
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({
+          type: "system",
+          content: "Error processing your request. Please try again."
+        }));
+      }
+    }
+  });
+
+  ws.on("close", (code, reason) => {
+    console.log(`Connection closed with code ${code}${reason ? ': ' + reason : ''}`);
+    clearInterval(pingInterval);
+    
+    if (!currentRoom || !currentPlayer) return;
+    
+    // Temporarily mark player as disconnected
+    currentPlayer.isReady = false;
+    
+    // Notify other players
+    currentRoom.players.forEach(player => {
+      if (player !== currentPlayer && player.ws.readyState === WebSocket.OPEN) {
+        player.ws.send(JSON.stringify({
+          type: "system",
+          content: `${currentPlayer ? currentPlayer.name : ""} disconnected`
+        }));
+        
+        // Update player list
+        player.ws.send(JSON.stringify({
+          type: "playerList",
+          players: currentRoom ? currentRoom.players.map(p => ({
+            name: p.name,
+            score: p.score,
+            isReady: p.isReady
+          })) : []
+        }));
+      }
+    });
+    
+    // If drawer left, end the round
+    if (currentRoom.currentDrawer === currentPlayer && currentRoom.isRoundActive) {
+      broadcastSystemMessage(currentRoom, `The drawer (${currentPlayer ? currentPlayer.name : ""}) disconnected. Ending round...`);
+      endRound(currentRoom);
+    }
+    
+    // Remove player after a short delay (to allow for reconnection)
+    setTimeout(() => {
+      if (!currentRoom || !currentPlayer) return;
+      
+      // Check if player is still in the room (hasn't reconnected)
+      const playerStillExists = currentRoom.players.some(p => p === currentPlayer);
+      if (playerStillExists && currentPlayer.ws.readyState !== WebSocket.OPEN) {
+        // Permanently remove player
+        currentRoom.players = currentRoom.players.filter(p => p !== currentPlayer);
+        
+        // If room is empty, remove it
+        if (currentRoom.players.length === 0) {
+          console.log(`Removing empty room ${currentRoom.roomId}`);
+          rooms.delete(currentRoom.roomId);
+        } else {
+          // Notify remaining players that someone was removed
+          currentRoom.players.forEach(player => {
+            if (player.ws.readyState === WebSocket.OPEN) {
+              player.ws.send(JSON.stringify({
+                type: "playerLeft",
+                playerName: currentPlayer ? currentPlayer.name : ""
+              }));
+              
+              // Update player list
+              player.ws.send(JSON.stringify({
+                type: "playerList",
+                players: currentRoom ? currentRoom.players.map(p => ({
+                  name: p.name,
+                  score: p.score,
+                  isReady: p.isReady
+                })) : []
+              }));
+            }
+          });
+        }
+      }
+    }, 30000); // 30-second grace period for reconnection
+  });
+
+  ws.on("error", (error) => {
+    console.error("WebSocket error:", error);
+    clearInterval(pingInterval);
+  });
+  
+  ws.on("pong", () => {
+    // Client is still connected
+  });
+});
+
+// Clean up disconnected players periodically
+setInterval(() => {
+  rooms.forEach(room => {
+    // Remove players with closed connections
+    const activePlayers = room.players.filter(player => 
+      player.ws.readyState === WebSocket.OPEN
+    );
+    
+    if (activePlayers.length < room.players.length) {
+      console.log(`Removing ${room.players.length - activePlayers.length} disconnected players from room ${room.roomId}`);
+      room.players = activePlayers;
+    }
+    
+    // Remove empty rooms
+    if (room.players.length === 0) {
+      console.log(`Removing empty room ${room.roomId}`);
+      rooms.delete(room.roomId);
+    }
+  });
+}, 60000);
+
+const PORT = process.env.PORT || 8080;
+server.listen(PORT, () => {
+  console.log(`WebSocket server running on port ${PORT}`);
+}); 

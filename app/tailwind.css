@@ -1,0 +1,371 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Custom animations */
+@keyframes fadeInUp {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes float {
+  0% {
+    transform: translateY(0px);
+  }
+  50% {
+    transform: translateY(-20px);
+  }
+  100% {
+    transform: translateY(0px);
+  }
+}
+
+@keyframes floatReverse {
+  0% {
+    transform: translateY(0px);
+  }
+  50% {
+    transform: translateY(20px);
+  }
+  100% {
+    transform: translateY(0px);
+  }
+}
+
+@keyframes pulse {
+  0%, 100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.8;
+    transform: scale(1.05);
+  }
+}
+
+@keyframes slideInRight {
+  from {
+    transform: translateX(100%);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+@keyframes shimmer {
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
+}
+
+@keyframes bounce {
+  0%, 100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-10px);
+  }
+}
+
+/* Enhanced UI animations */
+@keyframes popIn {
+  0% { 
+    transform: scale(0.9); 
+    opacity: 0; 
+  }
+  70% { 
+    transform: scale(1.05); 
+    opacity: 1; 
+  }
+  100% { 
+    transform: scale(1); 
+    opacity: 1; 
+  }
+}
+
+@keyframes glowPulse {
+  0%, 100% {
+    box-shadow: 0 0 5px rgba(99, 102, 241, 0.5);
+  }
+  50% {
+    box-shadow: 0 0 20px rgba(99, 102, 241, 0.8);
+  }
+}
+
+@keyframes gradientMove {
+  0% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+  100% {
+    background-position: 0% 50%;
+  }
+}
+
+@keyframes slideInUp {
+  0% {
+    transform: translateY(20px);
+    opacity: 0;
+  }
+  100% {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+@keyframes drawLine {
+  0% {
+    stroke-dashoffset: 1000;
+  }
+  100% {
+    stroke-dashoffset: 0;
+  }
+}
+
+/* Custom animation classes */
+.animate-fade-in-up {
+  animation: fadeInUp 0.6s ease forwards;
+  opacity: 0;
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.8s ease forwards;
+}
+
+.animate-float {
+  animation: float 6s ease-in-out infinite;
+}
+
+.animate-float-reverse {
+  animation: floatReverse 7s ease-in-out infinite;
+}
+
+.animate-pulse-slow {
+  animation: pulse 3s ease-in-out infinite;
+}
+
+.animate-slide-in-right {
+  animation: slideInRight 0.5s ease forwards;
+}
+
+.animate-shimmer {
+  background: linear-gradient(90deg, rgba(255,255,255,0.1) 25%, rgba(255,255,255,0.2) 50%, rgba(255,255,255,0.1) 75%);
+  background-size: 200% 100%;
+  animation: shimmer 2s infinite linear;
+}
+
+.animate-bounce-slow {
+  animation: bounce 3s ease-in-out infinite;
+}
+
+.animate-pop-in {
+  animation: popIn 0.4s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+}
+
+.animate-glow-pulse {
+  animation: glowPulse 2s infinite ease-in-out;
+}
+
+.animate-gradient-move {
+  background-size: 200% 200%;
+  animation: gradientMove 5s ease infinite;
+}
+
+.animate-slide-in-up {
+  animation: slideInUp 0.5s ease forwards;
+}
+
+.animate-draw-line {
+  stroke-dasharray: 1000;
+  stroke-dashoffset: 1000;
+  animation: drawLine 2s ease-in-out forwards;
+}
+
+/* Custom tool styling for drawing interface */
+.tool-button {
+  @apply p-2 rounded-lg transition-all duration-200 text-gray-700 hover:bg-gray-600/30;
+}
+
+.tool-button-active {
+  @apply bg-blue-500 text-white shadow-md hover:bg-blue-600;
+}
+
+.tool-button:hover:not(:disabled) {
+  @apply bg-opacity-80 transform scale-105;
+}
+
+.color-swatch {
+  @apply w-8 h-8 rounded-full border cursor-pointer transition-transform duration-200 hover:shadow-lg;
+}
+
+.color-swatch:hover:not(:disabled) {
+  @apply transform scale-110;
+}
+
+.color-swatch-active {
+  @apply border-2 border-black dark:border-white shadow-lg;
+}
+
+/* Enhanced button styling */
+.btn {
+  @apply px-4 py-2 rounded-lg font-medium transition-all duration-200 transform hover:translate-y-[-2px] focus:outline-none focus:ring-2 focus:ring-offset-2;
+}
+
+.btn-primary {
+  @apply bg-gradient-to-r from-indigo-600 to-blue-500 text-white shadow-md hover:from-indigo-700 hover:to-blue-600 focus:ring-indigo-500;
+}
+
+.btn-secondary {
+  @apply bg-gray-200 text-gray-800 dark:bg-gray-700 dark:text-white hover:bg-gray-300 dark:hover:bg-gray-600 focus:ring-gray-500;
+}
+
+.btn-danger {
+  @apply bg-gradient-to-r from-red-600 to-pink-500 text-white shadow-md hover:from-red-700 hover:to-pink-600 focus:ring-red-500;
+}
+
+.btn-success {
+  @apply bg-gradient-to-r from-green-600 to-emerald-500 text-white shadow-md hover:from-green-700 hover:to-emerald-600 focus:ring-green-500;
+}
+
+/* Glassmorphism effects */
+.glass {
+  @apply bg-white bg-opacity-20 backdrop-filter backdrop-blur-lg;
+}
+
+.glass-dark {
+  @apply bg-gray-800 bg-opacity-30 backdrop-filter backdrop-blur-lg;
+}
+
+/* Custom input styling */
+.input-modern {
+  @apply bg-gray-50 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500 dark:focus:ring-indigo-400 focus:border-transparent transition-all duration-200;
+}
+
+/* Custom chat styles */
+.chat-message {
+  @apply p-2 my-1 rounded-lg max-w-[80%] transition-all duration-200;
+}
+
+.chat-message-system {
+  @apply bg-gray-200 dark:bg-gray-700 text-gray-800 dark:text-gray-200 self-center max-w-full;
+}
+
+.chat-message-guess {
+  @apply bg-blue-100 dark:bg-blue-900/50 text-blue-800 dark:text-blue-200 self-start;
+}
+
+.chat-message-correct {
+  @apply bg-green-100 dark:bg-green-900/50 text-green-800 dark:text-green-200 self-end;
+}
+
+.chat-message-incorrect {
+  @apply bg-red-100 dark:bg-red-900/50 text-red-800 dark:text-red-200 self-start;
+}
+
+/* Card styling */
+.card {
+  @apply rounded-xl shadow-lg transition-all duration-200 hover:shadow-xl overflow-hidden;
+}
+
+.card-body {
+  @apply p-4;
+}
+
+.card-header {
+  @apply px-4 py-3 border-b border-gray-200 dark:border-gray-700 font-medium;
+}
+
+.card-footer {
+  @apply px-4 py-3 border-t border-gray-200 dark:border-gray-700;
+}
+
+/* Custom scrollbar */
+.scrollbar-thin::-webkit-scrollbar {
+  width: 6px;
+}
+
+.scrollbar-thin::-webkit-scrollbar-track {
+  @apply bg-transparent;
+}
+
+.scrollbar-thin::-webkit-scrollbar-thumb {
+  @apply bg-gray-600 rounded-full;
+}
+
+.scrollbar-thin::-webkit-scrollbar-thumb:hover {
+  @apply bg-gray-500;
+}
+
+/* Additional custom utilities */
+.text-shadow {
+  text-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+.text-shadow-lg {
+  text-shadow: 0 4px 8px rgba(0,0,0,0.2);
+}
+
+/* Canvas controls styling */
+.canvas-controls {
+  @apply flex gap-2 flex-wrap items-center mb-3 p-2 bg-gray-100 dark:bg-gray-800 rounded-lg shadow-inner;
+}
+
+.control-group {
+  @apply flex items-center space-x-2 bg-white dark:bg-gray-700 px-2 py-1 rounded-lg;
+}
+
+/* Toggle switch */
+.toggle-switch {
+  @apply relative inline-block w-12 h-6;
+}
+
+.toggle-switch input {
+  @apply opacity-0 w-0 h-0;
+}
+
+.toggle-slider {
+  @apply absolute cursor-pointer top-0 left-0 right-0 bottom-0 bg-gray-300 dark:bg-gray-600 transition-all duration-300 rounded-full;
+}
+
+.toggle-slider:before {
+  @apply absolute content-[''] h-4 w-4 left-1 bottom-1 bg-white transition-all duration-300 rounded-full;
+}
+
+input:checked + .toggle-slider {
+  @apply bg-indigo-600;
+}
+
+input:checked + .toggle-slider:before {
+  @apply transform translate-x-6;
+}
+
+html,
+body {
+  @apply bg-white dark:bg-gray-950;
+
+  @media (prefers-color-scheme: dark) {
+    color-scheme: dark;
+  }
+}
