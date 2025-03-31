@@ -1,103 +1,86 @@
-# DrawTogether - A Collaborative Drawing Game
+# SketchGuess - A Real-time Multiplayer Drawing and Guessing Game
 
-DrawTogether is a real-time multiplayer drawing and guessing game where one player draws a word while others try to guess it.
+SketchGuess is an online multiplayer game where players take turns drawing words while others try to guess them correctly. Built with modern web technologies, it provides a fun and interactive experience.
 
 ## Features
 
-- Real-time drawing with WebSockets
-- Multiple drawing tools (brush, eraser, colors, sizes)
-- Player readiness system
-- Turn-based gameplay with customizable timer
-- Speed-based scoring - faster guesses earn more points
-- Private guessing with immediate feedback
-- Chat functionality
-- Global leaderboard tracking player performance
-- Customizable game settings:
-  - Number of rounds
-  - Time per round
-  - Custom word lists
-- Fully responsive design for mobile and desktop
-- Score tracking and end-game leaderboard
+- **Real-time Drawing**: Collaborative canvas with WebSockets for instant updates
+- **Multiple Drawing Tools**: Brush, eraser, colors, sizes
+- **Turn-based Gameplay**: Players take turns drawing randomly selected words
+- **Custom Game Settings**: Customize rounds, time per round, and word lists
+- **Chat System**: Integrated chat for guessing and communication
+- **Scoring System**: Faster guesses earn more points
+- **Responsive Design**: Works on mobile and desktop devices
 
-## How to Play
+## Technical Improvements
 
-1. Join a room by entering a room ID or letting the app create one for you
-2. Enter your name to join the game
-3. Customize game settings if desired (rounds, time, custom words)
-4. Press "Ready" when you're prepared to play
-5. When all players are ready, the game will start
-6. If you're the drawer, you'll receive a word to draw
-7. If you're guessing, try to guess what the drawer is drawing
-8. Points are awarded for correct guesses (faster guesses earn more points)
-9. After all rounds, you'll see the game leaderboard and global top players
+Recent fixes and improvements:
+
+- ✅ Fixed room creation with consistent property naming
+- ✅ Enhanced WebSocket connection stability
+- ✅ Improved canvas clear functionality between rounds
+- ✅ Fixed game initialization and start process
+- ✅ Added better error handling and user feedback
 
 ## Getting Started
 
 ### Prerequisites
 
-- Node.js 14 or later
+- Node.js 14.0 or higher
 - npm or yarn
 
 ### Installation
 
-```bash
-# Clone the repository
-git clone https://github.com/yourusername/drawtogether.git
-cd drawtogether
+1. Clone this repository:
+   ```
+   git clone https://github.com/yourusername/sketchguess.git
+   cd sketchguess
+   ```
 
-# Install dependencies
-npm install
-```
+2. Install dependencies:
+   ```
+   npm install
+   ```
 
-### Running the App
+3. Run the development servers:
+   
+   For Windows:
+   ```
+   start-servers.bat
+   ```
+   
+   For Mac/Linux:
+   ```
+   # Terminal 1
+   npm run websocket
+   
+   # Terminal 2
+   npm run dev
+   ```
 
-The app requires two servers:
-1. The main Remix application server
-2. The WebSocket server for real-time communication
+4. Open [http://localhost:3000](http://localhost:3000) in your browser
 
-You can start both with the provided batch file (Windows):
+## How to Play
 
-```bash
-# Start both servers
-start-servers.bat
-```
+1. Create a new room or join an existing one with a room code
+2. Share the room code with friends
+3. Wait for everyone to join and click "Ready"
+4. Follow the prompts to draw when it's your turn
+5. Guess what others are drawing when it's not your turn
+6. Earn points for correct guesses and successful drawings
+7. Highest score at the end wins!
 
-Or start them individually:
+## Technologies Used
 
-```bash
-# Start the WebSocket server
-npm run websocket
+- React & Remix
+- WebSockets for real-time communication
+- TypeScript for type safety
+- Tailwind CSS for styling
 
-# In another terminal, start the Remix development server
-npm run dev
-```
+## License
 
-Then open http://localhost:3000 in your browser.
+MIT
 
-## Tech Stack
+## Acknowledgments
 
-- [Remix](https://remix.run/) - Full-stack web framework
-- [WebSocket](https://developer.mozilla.org/en-US/docs/Web/API/WebSocket) - Real-time communication
-- [React](https://reactjs.org/) - UI library
-- [TypeScript](https://www.typescriptlang.org/) - Type safety
-- [Tailwind CSS](https://tailwindcss.com/) - Styling
-
-## Game Rules
-
-- Each round, one player is selected to draw
-- The drawer has a limited time to draw the assigned word (default: 60 seconds)
-- Other players try to guess the word
-- Points are awarded based on:
-  - Correct guesses: 10 points + speed bonus (up to 20 points for very fast guesses)
-  - Drawing that others can guess: 5 points per correct guess
-- After all rounds, scores are tallied and a winner is declared
-- Players can see their position on the global leaderboard
-- Players can then ready up for a new game with the same or different settings
-
-## Mobile Support
-
-DrawTogether is fully responsive and works well on mobile devices:
-- Touch-friendly canvas for drawing
-- Collapsible player list for smaller screens
-- Optimized UI elements for touch interaction
-- Compact tools panel for mobile screens
+- Inspired by popular drawing games like Pictionary and skribbl.io
