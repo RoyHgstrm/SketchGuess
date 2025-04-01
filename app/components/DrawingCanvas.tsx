@@ -5,14 +5,25 @@ interface DrawingCanvasProps {
   darkMode: boolean;
 }
 
+// Define interfaces locally
+interface DrawingData {
+  type: 'draw' | 'clear';
+  x?: number;
+  y?: number;
+  prevX?: number;
+  prevY?: number;
+  color?: string;
+  lineWidth?: number;
+  isNewLine?: boolean;
+  drawerId?: string;
+}
+
 const DrawingCanvas: React.FC<DrawingCanvasProps> = ({ darkMode }) => {
-  const { handleDraw, currentPlayer, gameState } = useWebSocket();
+  const { handleDraw, currentPlayer, gameState, isConnected } = useWebSocket();
   
   // Canvas refs and state
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const viewCanvasRef = useRef<HTMLCanvasElement>(null);
   const contextRef = useRef<CanvasRenderingContext2D | null>(null);
-  const viewContextRef = useRef<CanvasRenderingContext2D | null>(null);
   const [isDrawingLine, setIsDrawingLine] = useState(false);
   const [currentColor, setCurrentColor] = useState("#000000");
   const [lineWidth, setLineWidth] = useState(5);
@@ -21,6 +32,7 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({ darkMode }) => {
   const canvasSizeRef = useRef({ width: 0, height: 0 });
   const containerRef = useRef<HTMLDivElement>(null);
   const resizeObserverRef = useRef<ResizeObserver | null>(null);
+  const lastClearTimestampRef = useRef<number | null>(null);
   
   // Store drawing history for redrawing when resizing
   interface DrawingAction {
@@ -37,9 +49,15 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({ darkMode }) => {
   
   const drawingHistoryRef = useRef<DrawingAction[]>([]);
 
-  // Check if current player can draw
-  const canDraw = currentPlayer?.isDrawing || false;
-  const isPlaying = gameState?.status === 'playing';
+  // Determine if current player can draw
+  const canDraw = gameState?.isDrawing || false;
+  
+  // Debug game state to help troubleshoot UI issues
+  useEffect(() => {
+    console.log('Game State Updated:', gameState);
+    console.log('Current player:', currentPlayer);
+    console.log('Can Draw:', canDraw);
+  }, [gameState, currentPlayer, canDraw]);
 
   // Color palette options
   const colors = [
@@ -57,70 +75,23 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({ darkMode }) => {
     context.fillRect(0, 0, canvas.width, canvas.height);
   }, []);
 
-  // Redraw the entire canvas based on history
-  const redrawCanvas = useCallback(() => {
-    const context = contextRef.current;
-    const canvas = canvasRef.current;
-    const viewContext = viewContextRef.current;
-    const viewCanvas = viewCanvasRef.current;
-    
-    // Clear and redraw both canvases
-    if (context && canvas) {
-      clearCanvas(context, canvas);
-      
-      // Redraw from history
-      drawingHistoryRef.current.forEach(action => {
-        if (action.type === 'clear') {
-          clearCanvas(context, canvas, action.color || '#FFFFFF');
-        } else if (action.type === 'draw' && action.x !== undefined && action.y !== undefined) {
-          context.strokeStyle = action.color || currentColor;
-          context.lineWidth = action.lineWidth || lineWidth;
-          
-          if (action.isNewLine) {
-            context.beginPath();
-            context.moveTo(action.x, action.y);
-          } else if (action.prevX !== undefined && action.prevY !== undefined) {
-            context.beginPath();
-            context.moveTo(action.prevX, action.prevY);
-            context.lineTo(action.x, action.y);
-            context.stroke();
-          }
-        }
-      });
-    }
-    
-    // Also redraw the view canvas if applicable
-    if (viewContext && viewCanvas && !canDraw) {
-      clearCanvas(viewContext, viewCanvas);
-      
-      // Redraw from history
-      drawingHistoryRef.current.forEach(action => {
-        if (action.type === 'clear') {
-          clearCanvas(viewContext, viewCanvas, action.color || '#FFFFFF');
-        } else if (action.type === 'draw' && action.x !== undefined && action.y !== undefined) {
-          viewContext.strokeStyle = action.color || currentColor;
-          viewContext.lineWidth = action.lineWidth || lineWidth;
-          
-          if (action.isNewLine) {
-            viewContext.beginPath();
-            viewContext.moveTo(action.x, action.y);
-          } else if (action.prevX !== undefined && action.prevY !== undefined) {
-            viewContext.beginPath();
-            viewContext.moveTo(action.prevX, action.prevY);
-            viewContext.lineTo(action.x, action.y);
-            viewContext.stroke();
-          }
-        }
-      });
-    }
-  }, [clearCanvas, currentColor, lineWidth, canDraw]);
-
   // Update canvas dimensions while maintaining the drawing
   const updateCanvasDimensions = useCallback(() => {
-    const canvas = canDraw ? canvasRef.current : viewCanvasRef.current;
+    const canvas = canvasRef.current;
     const container = containerRef.current;
     
     if (!canvas || !container) return;
+    
+    // Store the existing drawing to restore after resize
+    const existingContext = contextRef.current;
+    let imageData = null;
+    if (existingContext) {
+      try {
+        imageData = existingContext.getImageData(0, 0, canvas.width/2, canvas.height/2);
+      } catch (e) {
+        console.error('Could not save canvas state:', e);
+      }
+    }
     
     // Get container dimensions
     const containerWidth = container.clientWidth;
@@ -148,7 +119,7 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({ darkMode }) => {
     // Store dimensions for calculations
     canvasSizeRef.current = { width: canvasWidth, height: canvasHeight };
     
-    // Initialize context based on which canvas we're using
+    // Initialize context
     const context = canvas.getContext('2d');
     if (!context) return;
     
@@ -158,27 +129,36 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({ darkMode }) => {
     context.strokeStyle = currentColor;
     context.lineWidth = lineWidth;
     
-    if (canDraw) {
-      contextRef.current = context;
+    contextRef.current = context;
+    
+    // Set initial background to white only if no existing drawing
+    if (!imageData) {
+      context.fillStyle = '#FFFFFF';
+      context.fillRect(0, 0, canvas.width, canvas.height);
     } else {
-      viewContextRef.current = context;
+      // Restore previous drawing
+      try {
+        context.putImageData(imageData, 0, 0);
+      } catch (e) {
+        console.error('Could not restore canvas state:', e);
+        // Fallback to white background if restore fails
+        context.fillStyle = '#FFFFFF';
+        context.fillRect(0, 0, canvas.width, canvas.height);
+      }
     }
-    
-    // Set initial background to white
-    context.fillStyle = '#FFFFFF';
-    context.fillRect(0, 0, canvas.width, canvas.height);
-    
-    // Redraw the canvas with existing drawing history
-    redrawCanvas();
     
     console.log(`Canvas resized to ${canvasWidth}x${canvasHeight}, devicePixelRatio: ${window.devicePixelRatio}`);
-  }, [canDraw, currentColor, lineWidth, redrawCanvas]);
+  }, [currentColor, lineWidth]);
 
-  // Initialize drawer canvas
+  // Initialize canvas when component mounts or when drawing status changes
   useEffect(() => {
-    if (!canDraw) return;
+    if (!gameState || gameState.status !== 'playing') return;
     
-    updateCanvasDimensions();
+    // Only initialize the canvas once when the game starts
+    if (!contextRef.current) {
+      console.log('Initializing canvas for the first time');
+      updateCanvasDimensions();
+    }
     
     // Set up resize observer to handle container size changes
     if (containerRef.current && !resizeObserverRef.current) {
@@ -193,50 +173,53 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({ darkMode }) => {
     return () => {
       if (resizeObserverRef.current) {
         resizeObserverRef.current.disconnect();
+        resizeObserverRef.current = null;
       }
     };
-  }, [canDraw, updateCanvasDimensions]);
-
-  // Initialize viewer canvas
-  useEffect(() => {
-    if (canDraw || !isPlaying) return;
-    
-    updateCanvasDimensions();
-    
-    // Set up resize observer to handle container size changes
-    if (containerRef.current && !resizeObserverRef.current) {
-      resizeObserverRef.current = new ResizeObserver(() => {
-        updateCanvasDimensions();
-      });
-      
-      resizeObserverRef.current.observe(containerRef.current);
-    }
-    
-    // Clean up resize observer
-    return () => {
-      if (resizeObserverRef.current) {
-        resizeObserverRef.current.disconnect();
-      }
-    };
-  }, [canDraw, isPlaying, updateCanvasDimensions]);
+  }, [gameState, updateCanvasDimensions]);
 
   // Handle receiving drawing data from WebSocket
   useEffect(() => {
-    const handleDrawingData = (event: MessageEvent) => {
+    const handleDrawingData = (event: CustomEvent) => {
       try {
-        const data = JSON.parse(event.data);
+        const data = event.detail;
         
-        // Clear canvas message
+        // Add more descriptive logging to help debug issues
+        if (data.type === 'draw') {
+          console.log('Received drawing data:', {
+            type: data.type,
+            drawerId: data.drawerId,
+            timestamp: data.timestamp,
+            isNewLine: data.isNewLine,
+            coords: `(${data.x},${data.y})`,
+            prevCoords: data.prevX ? `(${data.prevX},${data.prevY})` : 'none'
+          });
+        } else {
+          console.log('Received drawing data:', data);
+        }
+        
+        // Clear canvas message - add timestamp check to prevent frequent clears
         if (data.type === 'clear') {
           console.log('Received clear canvas command');
+          
+          // Skip redundant clear commands (within short timeframes)
+          if (data.timestamp) {
+            const now = Date.now();
+            // Skip if we received another clear command in the last 5 seconds
+            if (lastClearTimestampRef.current && (now - lastClearTimestampRef.current < 5000)) {
+              console.log('Ignoring redundant clear command (too frequent)');
+              return;
+            }
+            lastClearTimestampRef.current = now;
+          }
+          
           drawingHistoryRef.current = []; // Clear drawing history
           
-          // Clear the appropriate canvas based on whether we're drawing or viewing
-          const canvas = canDraw ? canvasRef.current : viewCanvasRef.current;
-          const context = canDraw ? contextRef.current : viewContextRef.current;
+          const canvas = canvasRef.current;
+          const context = contextRef.current;
           
           if (canvas && context) {
-            clearCanvas(context, canvas, '#FFFFFF');
+            clearCanvas(context, canvas, data.color || '#FFFFFF');
           }
           
           return; // Don't process further after clearing
@@ -244,6 +227,22 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({ darkMode }) => {
         
         // Handle drawing data
         if (data.type === 'draw') {
+          // If we're the drawer and this is our own drawing data, ignore it
+          // We've already drawn it locally
+          if (currentPlayer && data.drawerId === currentPlayer.id && canDraw) {
+            console.log('Ignoring our own drawing data');
+            return;
+          }
+          
+          // Skip old drawing commands (more than 30 seconds old)
+          if (data.timestamp) {
+            const now = Date.now();
+            if (now - data.timestamp > 30000) {
+              console.log('Ignoring old drawing data');
+              return;
+            }
+          }
+          
           // Add to drawing history
           const drawAction: DrawingAction = {
             type: 'draw',
@@ -259,12 +258,14 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({ darkMode }) => {
           
           drawingHistoryRef.current.push(drawAction);
           
-          // If we're drawing, don't process the data (we already drew it)
-          if (canDraw) return;
-          
-          const context = viewContextRef.current;
+          const context = contextRef.current;
           if (!context) return;
           
+          // Set stroke properties
+          context.strokeStyle = data.color || '#000000';
+          context.lineWidth = data.lineWidth || 5;
+          
+          // Draw the line
           if (data.isNewLine) {
             context.beginPath();
             context.moveTo(data.x, data.y);
@@ -272,37 +273,31 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({ darkMode }) => {
             context.beginPath();
             context.moveTo(data.prevX || data.x, data.prevY || data.y);
             context.lineTo(data.x, data.y);
-            context.strokeStyle = data.color || '#000000';
-            context.lineWidth = data.lineWidth || 5;
             context.stroke();
+            context.closePath();
           }
         }
       } catch (error) {
-        // Not drawing data, ignore
+        console.error('Error processing drawing data:', error);
       }
     };
     
     // Add event listener for drawing data
-    if (isPlaying) {
-      if (typeof window !== 'undefined') {
-        window.addEventListener('message', handleDrawingData);
-      }
-    }
+    window.addEventListener('drawing-data', handleDrawingData as EventListener);
     
     return () => {
-      if (typeof window !== 'undefined') {
-        window.removeEventListener('message', handleDrawingData);
-      }
+      window.removeEventListener('drawing-data', handleDrawingData as EventListener);
     };
-  }, [canDraw, isPlaying, clearCanvas]);
+  }, [canDraw, clearCanvas, currentPlayer]);
 
-  // Update tools when drawer changes
+  // Update tools without resizing canvas
   useEffect(() => {
-    if (canDraw && contextRef.current) {
-      contextRef.current.strokeStyle = currentColor;
+    if (contextRef.current) {
+      // Only update the properties without clearing the canvas
+      contextRef.current.strokeStyle = tool === 'eraser' ? '#FFFFFF' : currentColor;
       contextRef.current.lineWidth = lineWidth;
     }
-  }, [canDraw, currentColor, lineWidth]);
+  }, [currentColor, lineWidth, tool]);
 
   // Listen for window resize events for responsive behavior
   useEffect(() => {
@@ -313,30 +308,10 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({ darkMode }) => {
     window.addEventListener('resize', handleWindowResize);
     window.addEventListener('orientationchange', handleWindowResize);
     
-    // Also respond to zoom changes with a custom event handler
-    // This helps on mobile browsers when user pinches to zoom
-    let lastWidth = window.innerWidth;
-    let lastHeight = window.innerHeight;
-    
-    const checkZoom = () => {
-      const newWidth = window.innerWidth;
-      const newHeight = window.innerHeight;
-      
-      if (Math.abs(newWidth - lastWidth) > 10 || Math.abs(newHeight - lastHeight) > 10) {
-        lastWidth = newWidth;
-        lastHeight = newHeight;
-        handleWindowResize();
-      }
-      
-      requestAnimationFrame(checkZoom);
-    };
-    
-    const rafId = requestAnimationFrame(checkZoom);
-    
+    // Clean up
     return () => {
       window.removeEventListener('resize', handleWindowResize);
       window.removeEventListener('orientationchange', handleWindowResize);
-      cancelAnimationFrame(rafId);
     };
   }, [updateCanvasDimensions]);
 
@@ -358,7 +333,7 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({ darkMode }) => {
       contextRef.current.fillRect(0, 0, canvas.width, canvas.height);
       
       // Send fill command to server
-      const fillData: DrawingAction = {
+      const fillData: DrawingData = {
         type: 'clear',
         color: currentColor
       };
@@ -367,10 +342,7 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({ darkMode }) => {
       drawingHistoryRef.current.push(fillData);
       
       // Send to server
-      handleDraw({
-        type: 'clear',
-        color: currentColor
-      });
+      handleDraw(fillData);
     } else {
       contextRef.current.beginPath();
       contextRef.current.moveTo(x, y);
@@ -383,7 +355,7 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({ darkMode }) => {
       }
 
       // Create drawing data
-      const drawData: DrawingAction = {
+      const drawData: DrawingData = {
         type: 'draw',
         x,
         y,
@@ -399,17 +371,7 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({ darkMode }) => {
       drawingHistoryRef.current.push(drawData);
       
       // Send start drawing command to server with drawer ID
-      handleDraw({
-        type: 'draw',
-        x,
-        y,
-        prevX: x,
-        prevY: y,
-        color: tool === 'eraser' ? '#FFFFFF' : currentColor,
-        lineWidth,
-        isNewLine: true,
-        drawerId: currentPlayer?.id
-      });
+      handleDraw(drawData);
     }
   }, [canDraw, currentColor, lineWidth, tool, handleDraw, currentPlayer]);
 
@@ -434,13 +396,14 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({ darkMode }) => {
     contextRef.current.moveTo(lastPoint.x, lastPoint.y);
     contextRef.current.lineTo(x, y);
     contextRef.current.stroke();
+    contextRef.current.closePath();
     
     // Update the last point
     const prevPoint = { ...lastPoint };
     setLastPoint({ x, y });
 
-    // Create drawing data
-    const drawData: DrawingAction = {
+    // Create drawing data for history
+    const drawAction: DrawingAction = {
       type: 'draw',
       x,
       y,
@@ -453,10 +416,10 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({ darkMode }) => {
     };
     
     // Add to drawing history
-    drawingHistoryRef.current.push(drawData);
+    drawingHistoryRef.current.push(drawAction);
     
-    // Send drawing update to server with drawer ID
-    handleDraw({
+    // Create drawing data for WebSocket
+    const drawData: DrawingData = {
       type: 'draw',
       x,
       y,
@@ -466,7 +429,11 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({ darkMode }) => {
       lineWidth,
       isNewLine: false,
       drawerId: currentPlayer?.id
-    });
+    };
+    
+    // Send drawing update to server with drawer ID
+    console.log('Sending drawing data to server:', drawData);
+    handleDraw(drawData);
   }, [isDrawingLine, canDraw, tool, currentColor, lineWidth, lastPoint, handleDraw, currentPlayer]);
 
   // Stop drawing function
@@ -502,9 +469,9 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({ darkMode }) => {
   }, [canDraw, handleDraw, currentPlayer, clearCanvas]);
 
   return (
-    <div className="flex flex-col h-full">
-      {/* Drawing status */}
-      {isPlaying && (
+    <div className="relative w-full h-full flex flex-col">
+      {/* Game status bar */}
+      {gameState?.status === 'playing' && (
         <div className={`mb-4 p-3 rounded-lg ${
           canDraw 
             ? 'bg-green-500/20 border border-green-500/30' 
@@ -513,21 +480,21 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({ darkMode }) => {
           {canDraw ? (
             <div className="flex items-center">
               <span className="font-medium text-green-400 mr-2">Your turn to draw:</span>
-              <span className="bg-gray-700 px-3 py-1 rounded-lg font-bold">{gameState.word}</span>
+              <span className="bg-gray-700 px-3 py-1 rounded-lg font-bold">{gameState?.word}</span>
             </div>
           ) : (
             <div className="text-blue-400">
-              {gameState.drawer?.name} is drawing... Guess the word!
+              {gameState?.drawer?.name} is drawing... Guess the word!
             </div>
           )}
         </div>
       )}
 
-      {/* Tools panel - only shown when it's the player's turn to draw */}
-      {canDraw && isPlaying && (
-        <div className={`flex flex-wrap items-center gap-4 p-4 mb-4 rounded-lg ${darkMode ? 'bg-gray-700' : 'bg-gray-100'}`}>
+      {/* Drawing tools - only show if current player is the drawer */}
+      {canDraw && gameState?.status === 'playing' && (
+        <div className={`flex flex-wrap items-center gap-2 p-3 mb-4 rounded-lg ${darkMode ? 'bg-gray-700' : 'bg-gray-100'}`}>
           {/* Tools */}
-          <div className="flex gap-2">
+          <div className="flex gap-1">
             <button
               onClick={() => setTool('brush')}
               className={`p-2 rounded-lg transition-all ${
@@ -537,7 +504,7 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({ darkMode }) => {
               }`}
               title="Brush"
             >
-              <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
               </svg>
             </button>
@@ -550,7 +517,7 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({ darkMode }) => {
               }`}
               title="Eraser"
             >
-              <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
               </svg>
             </button>
@@ -563,7 +530,7 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({ darkMode }) => {
               }`}
               title="Fill"
             >
-              <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 21a4 4 0 01-4-4V5a2 2 0 012-2h4a2 2 0 012 2v12a4 4 0 01-4 4zm0 0h12a2 2 0 002-2v-4a2 2 0 00-2-2h-2.343M11 7.343l1.657-1.657a2 2 0 012.828 0l2.829 2.829a2 2 0 010 2.828l-8.486 8.485M7 17h.01" />
               </svg>
             </button>
@@ -575,7 +542,7 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({ darkMode }) => {
               <button
                 key={color}
                 onClick={() => setCurrentColor(color)}
-                className={`w-8 h-8 rounded-lg transition-all ${
+                className={`w-6 h-6 rounded-lg transition-all ${
                   currentColor === color ? 'scale-110 shadow-lg ring-2 ring-indigo-500' : 'hover:scale-105'
                 }`}
                 style={{ backgroundColor: color }}
@@ -586,7 +553,7 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({ darkMode }) => {
               type="color"
               value={currentColor}
               onChange={(e) => setCurrentColor(e.target.value)}
-              className="w-8 h-8 rounded-lg cursor-pointer"
+              className="w-6 h-6 rounded-lg cursor-pointer"
               title="Custom Color"
             />
           </div>
@@ -597,7 +564,7 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({ darkMode }) => {
               <button
                 key={size}
                 onClick={() => setLineWidth(size)}
-                className={`w-8 h-8 rounded-lg flex items-center justify-center transition-all ${
+                className={`w-6 h-6 rounded-lg flex items-center justify-center transition-all ${
                   lineWidth === size 
                     ? 'bg-indigo-500 text-white shadow-lg scale-105' 
                     : 'bg-gray-200 dark:bg-gray-600 hover:bg-gray-300 dark:hover:bg-gray-500'
@@ -616,45 +583,35 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({ darkMode }) => {
           <button
             onClick={clearCanvasHandler}
             disabled={!canDraw}
-            className="px-4 py-2 bg-red-500 hover:bg-red-600 text-white rounded-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed ml-auto"
+            className="px-3 py-1 bg-red-500 hover:bg-red-600 text-white rounded-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed ml-auto"
           >
             Clear
           </button>
         </div>
       )}
 
-      {/* Canvas Container with Custom Border when drawing */}
+      {/* Canvas Container */}
       <div 
         ref={containerRef}
         className={`flex-1 relative rounded-lg overflow-hidden ${
-          canDraw ? 'ring-4 ring-green-500 ring-opacity-50' : 'ring-2 ring-blue-500 ring-opacity-30'
+          canDraw ? 'ring-2 ring-green-500 ring-opacity-50' : 'ring-1 ring-blue-500 ring-opacity-30'
         }`}
       >
-        {/* Drawing Canvas - only for drawers */}
-        {canDraw && (
-          <canvas
-            ref={canvasRef}
-            onMouseDown={startDrawing}
-            onMouseMove={draw}
-            onMouseUp={stopDrawing}
-            onMouseLeave={stopDrawing}
-            onTouchStart={startDrawing}
-            onTouchMove={draw}
-            onTouchEnd={stopDrawing}
-            className={`absolute inset-0 rounded-lg ${darkMode ? 'bg-white' : 'bg-white'} touch-none cursor-crosshair`}
-          />
-        )}
-        
-        {/* Viewing Canvas - for players who are not drawing */}
-        {!canDraw && isPlaying && (
-          <canvas
-            ref={viewCanvasRef}
-            className={`absolute inset-0 rounded-lg ${darkMode ? 'bg-white' : 'bg-white'} touch-none cursor-default`}
-          />
-        )}
+        {/* Drawing Canvas */}
+        <canvas
+          ref={canvasRef}
+          onMouseDown={startDrawing}
+          onMouseMove={draw}
+          onMouseUp={stopDrawing}
+          onMouseLeave={stopDrawing}
+          onTouchStart={startDrawing}
+          onTouchMove={draw}
+          onTouchEnd={stopDrawing}
+          className={`absolute inset-0 rounded-lg bg-white touch-none ${canDraw ? 'cursor-crosshair' : 'cursor-default'}`}
+        />
         
         {/* Waiting state - show if game is not in progress */}
-        {!isPlaying && (
+        {gameState?.status !== 'playing' && (
           <div className="absolute inset-0 flex items-center justify-center bg-gray-800 z-10 text-white">
             <div className="text-center p-6">
               <div className="text-4xl mb-4">🎨</div>

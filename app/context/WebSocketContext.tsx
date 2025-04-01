@@ -12,12 +12,16 @@ interface Player {
 }
 
 interface GameState {
-  status: 'waiting' | 'playing' | 'ended';
+  status: string;
   currentRound: number;
   maxRounds: number;
   timeLeft: number;
   word?: string;
-  drawer?: Player;
+  drawer?: {
+    id: string;
+    name: string;
+  };
+  isDrawing?: boolean;
 }
 
 interface ChatMessage {
@@ -49,6 +53,8 @@ interface GameSettings {
 interface ExtendedWebSocket extends WebSocket {
   pingInterval?: NodeJS.Timeout | null;
   lastPongTime?: number;
+  isReconnecting?: boolean;
+  roomId?: string;
 }
 
 // Add a new interface for leaderboard players
@@ -65,6 +71,7 @@ interface WebSocketContextType {
   isConnected: boolean;
   connectionError: string | null;
   reconnectAttempts: number;
+  isReconnecting: boolean;
   
   // Game state
   players: Player[];
@@ -83,6 +90,7 @@ interface WebSocketContextType {
   updateGameSettings: (settings: GameSettings) => void;
   kickPlayer: (playerNameToKick: string) => void;
   startNewGame: () => void;
+  retryConnection: () => void;
 }
 
 // Default game settings
@@ -97,6 +105,7 @@ export const WebSocketContext = createContext<WebSocketContextType>({
   isConnected: false,
   connectionError: null,
   reconnectAttempts: 0,
+  isReconnecting: false,
   players: [],
   messages: [],
   gameState: null,
@@ -110,7 +119,8 @@ export const WebSocketContext = createContext<WebSocketContextType>({
   handleReady: () => {},
   updateGameSettings: () => {},
   kickPlayer: () => {},
-  startNewGame: () => {}
+  startNewGame: () => {},
+  retryConnection: () => {}
 });
 
 // Update the getWebSocketURL function to better handle different environments
@@ -155,12 +165,11 @@ export const useWebSocket = () => useContext(WebSocketContext);
 
 // Provider component
 export const WebSocketProvider: React.FC<{children: React.ReactNode}> = ({ children }) => {
-  // Connection state
   const [isConnected, setIsConnected] = useState(false);
   const [connectionError, setConnectionError] = useState<string | null>(null);
   const [reconnectAttempts, setReconnectAttempts] = useState(0);
-  
-  // Game state
+  const [isReconnecting, setIsReconnecting] = useState(false);
+  const [webSocket, setWebSocket] = useState<WebSocket | null>(null);
   const [players, setPlayers] = useState<Player[]>([]);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [gameState, setGameState] = useState<GameState | null>(null);
@@ -177,19 +186,97 @@ export const WebSocketProvider: React.FC<{children: React.ReactNode}> = ({ child
   const manualDisconnectRef = useRef(false);
   const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const pingIntervalRef = useRef<NodeJS.Timeout | null>(null);
-
-  // Improve the handleWebSocketMessage function to better handle player identity
+  // Add reconnection throttling to prevent excessive reconnections
+  const lastReconnectAttemptRef = useRef<number>(0);
+  const reconnectThrottleTimeRef = useRef<number>(1000); // Start with 1 second
+  const reconnectAttemptsRef = useRef<number>(0);
+  // Add a cool-down for reconnection
+  const inCooldownRef = useRef(false);
+  const cooldownTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  // Track connection issues
+  const consecutiveFailuresRef = useRef(0);
+  
+  // Add a connection attempt debounce mechanism
+  const connectDebounceTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const connectionInProgressRef = useRef(false);
+  
+  // Track last few connections to detect connection bursts
+  const recentConnectionAttemptsRef = useRef<number[]>([]);
+  const MAX_RECENT_CONNECTIONS = 5;
+  const MIN_CONNECTION_INTERVAL_MS = 2000; // 2 seconds between connections
+  
+  // Function to track connection attempts and detect if connecting too frequently
+  const isConnectingTooFrequently = useCallback(() => {
+    const now = Date.now();
+    
+    // Clean up old connection attempts (older than 60 seconds)
+    recentConnectionAttemptsRef.current = recentConnectionAttemptsRef.current.filter(
+      timestamp => now - timestamp < 60000
+    );
+    
+    // If we have max recent connections, check the timestamps
+    if (recentConnectionAttemptsRef.current.length >= MAX_RECENT_CONNECTIONS) {
+      // Get the oldest timestamp from the recent connections
+      const oldestTimestamp = Math.min(...recentConnectionAttemptsRef.current);
+      const timeWindow = now - oldestTimestamp;
+      
+      // If we've made 5 or more connections in less than 10 seconds, that's too frequent
+      if (timeWindow < 10000) {
+        console.warn(`Too many connection attempts: ${recentConnectionAttemptsRef.current.length} in ${timeWindow}ms`);
+        return true;
+      }
+    }
+    
+    // Also check if the most recent connection was too soon
+    if (recentConnectionAttemptsRef.current.length > 0) {
+      const mostRecentTimestamp = Math.max(...recentConnectionAttemptsRef.current);
+      const timeSinceLastConnect = now - mostRecentTimestamp;
+      
+      if (timeSinceLastConnect < MIN_CONNECTION_INTERVAL_MS) {
+        console.warn(`Connection attempt too soon after previous: ${timeSinceLastConnect}ms`);
+        return true;
+      }
+    }
+    
+    // If we got here, connection frequency is acceptable
+    return false;
+  }, []);
+  
+  // Function to record a connection attempt
+  const recordConnectionAttempt = useCallback(() => {
+    recentConnectionAttemptsRef.current.push(Date.now());
+    
+    // Keep only the most recent MAX_RECENT_CONNECTIONS attempts
+    if (recentConnectionAttemptsRef.current.length > MAX_RECENT_CONNECTIONS) {
+      recentConnectionAttemptsRef.current.shift();
+    }
+  }, []);
+  
+  // Update the handleWebSocketMessage function to properly handle pings
   const handleWebSocketMessage = useCallback((event: MessageEvent) => {
     try {
       const data = JSON.parse(event.data);
       console.log('Received WebSocket message:', data.type);
       
-      // Update last pong time when we receive a pong
-      if (data.type === 'pong' && wsRef.current) {
-        wsRef.current.lastPongTime = Date.now();
-        return; // No need to process pongs further
+      // Immediate response to ping messages with a pong
+      if (data.type === 'ping') {
+        console.log('Received ping, sending pong response');
+        if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+          wsRef.current.send(JSON.stringify({ 
+            type: 'pong',
+            timestamp: data.timestamp,
+            clientTimestamp: Date.now()
+          }));
+        }
+        return; // Don't process ping messages further
       }
       
+      // Update last pong time when we receive any message
+      if (wsRef.current) {
+        wsRef.current.lastPongTime = Date.now();
+      }
+      
+      // Regular message handling
       switch (data.type) {
         case 'playerList':
           setPlayers(data.players || []);
@@ -206,8 +293,9 @@ export const WebSocketProvider: React.FC<{children: React.ReactNode}> = ({ child
         case 'system':
         case 'correct':
         case 'incorrect':
+          console.log('Received chat message:', data);
           setMessages(prev => [...prev, {
-            id: data.id || Date.now().toString(),
+            id: data.id || `${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
             type: data.type,
             playerName: data.playerName || 'System',
             content: data.content,
@@ -215,7 +303,35 @@ export const WebSocketProvider: React.FC<{children: React.ReactNode}> = ({ child
           }]);
           break;
         case 'gameState':
-          setGameState(data.gameState);
+          console.log('Game state update:', data.gameState);
+          // Only update the game state if there are meaningful changes
+          // This prevents unnecessary canvas redraws
+          setGameState(prevState => {
+            if (!prevState) return data.gameState;
+            
+            // Check if this is just a time update or has other changes
+            const isJustTimeUpdate = 
+              prevState.status === data.gameState.status &&
+              prevState.currentRound === data.gameState.currentRound &&
+              prevState.maxRounds === data.gameState.maxRounds &&
+              prevState.isDrawing === data.gameState.isDrawing &&
+              prevState.drawer?.id === data.gameState.drawer?.id;
+              
+            // If it's just a time update, only update time
+            if (isJustTimeUpdate) {
+              return {
+                ...prevState,
+                timeLeft: data.gameState.timeLeft
+              };
+            }
+            
+            // Otherwise update the full state
+            return {
+              ...prevState,
+              ...data.gameState,
+              isDrawing: data.gameState.isDrawing
+            };
+          });
           break;
         case 'gameSettings':
           setGameSettings(data.settings);
@@ -226,7 +342,7 @@ export const WebSocketProvider: React.FC<{children: React.ReactNode}> = ({ child
           
           // Add system message about game end
           const leaderboardMessage: ChatMessage = {
-            id: Date.now().toString(),
+            id: `leaderboard_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
             type: 'system',
             playerName: 'System',
             content: data.message || 'Game has ended. Check the leaderboard for final scores.',
@@ -234,226 +350,378 @@ export const WebSocketProvider: React.FC<{children: React.ReactNode}> = ({ child
           };
           setMessages(prev => [...prev, leaderboardMessage]);
           break;
+        case 'clear':
+          // Canvas clearing event is handled by the DrawingCanvas component
+          // Dispatch a custom event so DrawingCanvas can handle it
+          if (typeof window !== 'undefined') {
+            console.log('Dispatching clear canvas event');
+            window.dispatchEvent(new CustomEvent('drawing-data', { 
+              detail: { ...data, type: 'clear' }
+            }));
+          }
+          break;
+        case 'draw':
+          // Drawing data from the server
+          // Forward it to the DrawingCanvas component via a custom event
+          if (typeof window !== 'undefined') {
+            console.log('Dispatching drawing data event:', data);
+            // Ensure timestamp is present and use current time if not
+            if (!data.timestamp) {
+              data.timestamp = Date.now();
+            }
+            window.dispatchEvent(new CustomEvent('drawing-data', { 
+              detail: data
+            }));
+          }
+          break;
+        case 'drawerWord':
+          // Handle word to draw for the current drawer
+          console.log('Received word to draw:', data.word);
+          // Add the word to the game state
+          setGameState(prevState => {
+            if (!prevState) return prevState;
+            return {
+              ...prevState,
+              word: data.word,
+            };
+          });
+          // Also add a system message
+          setMessages(prev => [...prev, {
+            id: `drawerWord_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+            type: 'system',
+            playerName: 'System',
+            content: data.content || `Your word to draw is: ${data.word}`,
+            timestamp: Date.now()
+          }]);
+          break;
+        case 'timeUpdate':
+          // Just handling time updates through logging
+          // The actual time updates are reflected in the gameState
+          console.log(`Time update: ${data.timeLeft}s remaining`);
+          break;
+        case 'error':
+          // Handle server error messages
+          console.error('Server error:', data.message || data.content);
+          setConnectionError(data.message || data.content || 'Unknown server error');
+          
+          // Add error message to chat for visibility
+          setMessages(prev => [...prev, {
+            id: `error_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+            type: 'system',
+            playerName: 'System',
+            content: data.message || data.content || 'Unknown server error',
+            timestamp: Date.now()
+          }]);
+          break;
         default:
           console.log('Unhandled message type:', data.type);
       }
     } catch (error) {
       console.error('Error processing WebSocket message:', error);
     }
-  }, []);
+  }, [currentPlayer]);
 
-  // Improved heartbeat mechanism to detect connection issues
-  const setupHeartbeat = useCallback((ws: ExtendedWebSocket) => {
-    if (!ws) return;
-    
-    // Clear any existing ping interval
-    if (ws.pingInterval) {
-      clearInterval(ws.pingInterval);
-    }
-    
-    // Last time we received a pong response
-    ws.lastPongTime = Date.now();
-    
-    // Set up ping-pong to detect broken connections
-    ws.pingInterval = setInterval(() => {
-      if (ws.readyState === WebSocket.OPEN) {
-        // Check if we're still receiving pongs
-        const timeSinceLastPong = Date.now() - (ws.lastPongTime || 0);
-        if (timeSinceLastPong > 30000) {
-          // No pong received for 30 seconds, connection is probably dead
-          console.log("No pong response for 30s, closing connection");
-          
-          try {
-            ws.close(1000, "Connection timeout");
-          } catch (error) {
-            console.error("Error closing timed out connection:", error);
-          }
-          
-          // Clear the ping interval
-          if (ws.pingInterval) {
-            clearInterval(ws.pingInterval);
-            ws.pingInterval = null;
-          }
-          
-          return;
-        }
-        
-        // Send a ping
-        try {
-          // Send a ping as JSON message (standard approach)
-          ws.send(JSON.stringify({ type: "ping" }));
-        } catch (error) {
-          console.error("Error sending ping:", error);
-        }
-      } else {
-        // Connection is not open, clear interval
-        if (ws.pingInterval) {
-          clearInterval(ws.pingInterval);
-          ws.pingInterval = null;
-        }
-      }
-    }, 15000); // Check every 15 seconds
-  }, []);
-
-  // Update the connect function to properly establish a connection
-  const connect = useCallback((roomId: string, playerName: string) => {
-    console.log(`Connecting to room ${roomId} as ${playerName}`);
-    
-    try {
-      // Clean up any existing connections first
-      if (wsRef.current) {
-        console.log('Closing existing connection before reconnecting');
-        wsRef.current.close();
-        wsRef.current = null;
-        
-        // Clear any existing timers
-        if (reconnectTimeoutRef.current) {
-          clearTimeout(reconnectTimeoutRef.current);
-          reconnectTimeoutRef.current = null;
-        }
-        
-        if (pingIntervalRef.current) {
-          clearInterval(pingIntervalRef.current);
-          pingIntervalRef.current = null;
-        }
-      }
-      
-      // Generate WebSocket URL
-      const wsUrl = getWebSocketURL(roomId);
-      console.log(`Connecting to WebSocket URL: ${wsUrl}`);
-      
-      // Create a new WebSocket connection
-      const ws = new WebSocket(wsUrl) as ExtendedWebSocket;
-      
-      // Set connection timeout
-      const connectionTimeout = setTimeout(() => {
-        if (ws.readyState !== WebSocket.OPEN) {
-          console.error('Connection timeout');
-          setConnectionError('Connection timeout. Server might be down or unreachable.');
-          ws.close();
-          
-          // Try to reconnect after a timeout
-          scheduleReconnect(roomId, playerName);
-        }
-      }, 10000); // 10-second connection timeout
-      
-      // Handle connection open
-      ws.onopen = () => {
-        console.log('WebSocket connection established');
-        clearTimeout(connectionTimeout);
-        setIsConnected(true);
-        setConnectionError(null);
-        setReconnectAttempts(0);
-        
-        // Store connection in ref
-        wsRef.current = ws;
-        
-        // Send join message
-        const joinMessage = {
-          type: 'join',
-          roomId,
-          playerName
-        };
-        
-        ws.send(JSON.stringify(joinMessage));
-        
-        // Start ping interval for maintaining connection
-        startPingInterval(ws);
-      };
-      
-      // Handle connection errors
-      ws.onerror = (error) => {
-        console.error('WebSocket error:', error);
-        setConnectionError('Connection error. Please check your network connection.');
-        
-        // Try to reconnect after an error
-        scheduleReconnect(roomId, playerName);
-      };
-      
-      // Handle connection close
-      ws.onclose = (event) => {
-        console.log(`WebSocket closed: ${event.code} - ${event.reason}`);
-        clearTimeout(connectionTimeout);
-        
-        setIsConnected(false);
-        
-        if (!manualDisconnectRef.current) {
-          // Only add error message if it wasn't a manual disconnect
-          if (event.code === 1000) {
-            // Normal closure
-            setConnectionError('Disconnected from server');
-          } else if (event.code === 1001) {
-            setConnectionError('Server is restarting');
-          } else {
-            setConnectionError('Connection closed unexpectedly');
-          }
-          
-          // Try to reconnect
-          scheduleReconnect(roomId, playerName);
-        }
-        
-        // Clean up ping interval
-        if (pingIntervalRef.current) {
-          clearInterval(pingIntervalRef.current);
-          pingIntervalRef.current = null;
-        }
-      };
-      
-      // Handle incoming messages
-      ws.onmessage = handleWebSocketMessage;
-      
-    } catch (error) {
-      console.error('Error connecting to WebSocket:', error);
-      setConnectionError(`Connection error: ${error instanceof Error ? error.message : 'Unknown error'}`);
-      scheduleReconnect(roomId, playerName);
-    }
-  }, [handleWebSocketMessage]);
-
-  // Function to start a ping interval to keep the connection alive
-  const startPingInterval = (ws: WebSocket) => {
-    // Clear any existing ping interval
-    if (pingIntervalRef.current) {
-      clearInterval(pingIntervalRef.current);
-    }
-    
-    // Start a new ping interval
-    pingIntervalRef.current = setInterval(() => {
-      if (ws.readyState === WebSocket.OPEN) {
-        try {
-          // Send a ping message
-          ws.send(JSON.stringify({ type: 'ping', timestamp: Date.now() }));
-        } catch (error) {
-          console.error('Error sending ping:', error);
-        }
-      }
-    }, 30000); // Send ping every 30 seconds
-  };
-
-  // Function to schedule a reconnection attempt
-  const scheduleReconnect = (roomId: string, playerName: string) => {
-    if (reconnectAttempts >= 10) {
-      console.log('Max reconnect attempts reached');
-      setConnectionError('Unable to connect after multiple attempts. Please try refreshing the page.');
+  // Manual retry function for when automatic reconnects fail
+  const retryConnection = useCallback(() => {
+    // Don't retry if we don't have credentials
+    if (!roomId || !playerName) {
+      console.error("Cannot retry: Missing roomId or playerName");
       return;
     }
     
-    const delay = Math.min(1000 * Math.pow(1.5, reconnectAttempts), 30000); // Exponential backoff capped at 30s
-    console.log(`Scheduling reconnect attempt ${reconnectAttempts + 1} in ${delay}ms`);
-    
-    if (reconnectTimeoutRef.current) {
-      clearTimeout(reconnectTimeoutRef.current);
+    // Exit any cooldown state
+    if (inCooldownRef.current) {
+      if (cooldownTimeoutRef.current) {
+        clearTimeout(cooldownTimeoutRef.current);
+        cooldownTimeoutRef.current = null;
+      }
+      inCooldownRef.current = false;
     }
     
+    // Reset connection state
+    consecutiveFailuresRef.current = 0;
+    reconnectThrottleTimeRef.current = 1000;
+    setReconnectAttempts(0);
+    setConnectionError(null);
+    setIsReconnecting(true);
+    
+    // Attempt to connect
+    console.log("Manual connection retry initiated");
+    connect(roomId, playerName);
+  }, [roomId, playerName]);
+  
+  // Track reconnecting state
+  useEffect(() => {
+    // Set reconnecting state based on reconnect attempts
+    if (reconnectAttempts > 0 && !isConnected) {
+      setIsReconnecting(true);
+    } else if (isConnected) {
+      setIsReconnecting(false);
+    }
+  }, [reconnectAttempts, isConnected]);
+
+  // Function to put connection into cooldown
+  const enterCooldownMode = useCallback((duration: number) => {
+    inCooldownRef.current = true;
+    
+    // Clear any existing cooldown
+    if (cooldownTimeoutRef.current) {
+      clearTimeout(cooldownTimeoutRef.current);
+    }
+    
+    console.log(`Entering connection cooldown for ${duration/1000} seconds`);
+    
+    // Set a timeout to exit cooldown mode
+    cooldownTimeoutRef.current = setTimeout(() => {
+      console.log('Exiting connection cooldown mode');
+      inCooldownRef.current = false;
+      cooldownTimeoutRef.current = null;
+      
+      // Also update UI to indicate cooldown is done
+      setConnectionError(prev => 
+        prev && prev.includes("throttled") 
+          ? "Connection cooldown period ended. You can retry connecting now." 
+          : prev
+      );
+    }, duration);
+  }, []);
+
+  // Improved scheduleReconnect function - REPLACING the existing one
+  const scheduleReconnect = useCallback((roomId: string, playerName: string) => {
+    if (!roomId || !playerName) {
+      setConnectionError('Missing room ID or player name');
+      return;
+    }
+
+    // Don't schedule reconnect if manually disconnected
+    if (manualDisconnectRef.current) {
+      console.log('Manual disconnect flag set, not scheduling reconnect');
+      return;
+    }
+    
+    // Don't schedule reconnect if in cooldown
+    if (inCooldownRef.current) {
+      console.log('In connection cooldown, not scheduling reconnect');
+      return;
+    }
+
+    // Clear any existing reconnect attempt
+    if (reconnectTimeoutRef.current) {
+      clearTimeout(reconnectTimeoutRef.current);
+      reconnectTimeoutRef.current = null;
+    }
+
+    // Calculate backoff time with exponential increase
+    const nextReconnectAttempt = reconnectAttemptsRef.current + 1;
+    const baseDelay = 1000; // Start with 1 second
+    const maxDelay = 30000; // Max 30 seconds
+    
+    // Exponential backoff: 1s, 2s, 4s, 8s, 16s, 30s, 30s, ...
+    const backoffTime = Math.min(baseDelay * Math.pow(2, nextReconnectAttempt - 1), maxDelay);
+    
+    console.log(`Scheduling reconnect in ${backoffTime/1000} seconds (attempt ${nextReconnectAttempt})`);
+    setIsReconnecting(true);
+    
+    // Add a system message about reconnection
+    setMessages(prev => [...prev, {
+      id: `reconnect_scheduled_${Date.now()}`,
+      type: 'system',
+      playerName: 'System',
+      content: `Reconnecting in ${Math.ceil(backoffTime/1000)} seconds (attempt ${nextReconnectAttempt}/10)...`,
+      timestamp: Date.now()
+    }]);
+    
+    // Stop after 10 reconnect attempts and enter cooldown
+    if (nextReconnectAttempt > 10) {
+      console.log('Maximum reconnect attempts reached (10), entering cooldown');
+      setConnectionError('Unable to establish a stable connection after multiple attempts. Please refresh the page or try again later.');
+      setIsReconnecting(false);
+      enterCooldownMode(120000); // 2 minute cooldown
+      return;
+    }
+    
+    // Schedule the reconnect with exponential backoff
     reconnectTimeoutRef.current = setTimeout(() => {
-      setReconnectAttempts(prev => prev + 1);
-      connect(roomId, playerName);
-    }, delay);
+      // Update attempt counter
+      reconnectAttemptsRef.current = nextReconnectAttempt;
+      setReconnectAttempts(nextReconnectAttempt);
+      
+      // Attempt reconnection if not connected, not manually disconnected, and not in cooldown
+      if (!isConnected && !manualDisconnectRef.current && !inCooldownRef.current) {
+        console.log(`Attempting reconnect ${nextReconnectAttempt}/10...`);
+        connect(roomId, playerName);
+      }
+    }, backoffTime);
+  }, [isConnected, enterCooldownMode]);
+
+  // Improved connect function - REPLACING the existing one
+  const connect = useCallback((roomId: string, playerName: string) => {
+    if (!roomId || !playerName) {
+      console.error('Missing roomId or playerName');
+      setConnectionError('Missing room information');
+      return;
+    }
+
+    // Store room and player name for reconnection
+    setRoomId(roomId);
+    setPlayerName(playerName);
+
+    // If a connection attempt is already in progress, don't start another
+    if (connectionInProgressRef.current) {
+      console.log('Connection already in progress, skipping...');
+      return;
+    }
+
+    // Prevent making a new connection if we have a valid one
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      console.log('WebSocket already connected');
+      
+      // Re-send join message to ensure we're properly registered
+      try {
+        console.log('Re-sending join message');
+        wsRef.current.send(JSON.stringify({
+          type: 'join',
+          roomId,
+          playerName
+        }));
+        return;
+      } catch (error) {
+        console.error('Error re-sending join message:', error);
+        // Continue to create a new connection if sending failed
+      }
+    }
+
+    // Set connection in progress flag
+    connectionInProgressRef.current = true;
+
+    // Clear any existing connection
+    if (wsRef.current) {
+      try {
+        console.log('Closing existing connection before creating a new one');
+        wsRef.current.close(1000, "Reconnecting");
+      } catch (error) {
+        console.error('Error closing existing connection:', error);
+      }
+      wsRef.current = null;
+    }
+
+    try {
+      console.log(`Creating new WebSocket connection to ${getWebSocketURL(roomId)}`);
+      
+      // Create WebSocket with proper error handling
+      const ws = new WebSocket(getWebSocketURL(roomId)) as ExtendedWebSocket;
+      wsRef.current = ws;
+      
+      // Track room and player info
+      ws.roomId = roomId;
+      
+      // Handle connection opened
+      ws.onopen = () => {
+        console.log('WebSocket connected successfully');
+        
+        setConnectionError(null);
+        setIsConnected(true);
+        connectionInProgressRef.current = false;
+        
+        // Reset reconnection state
+        reconnectAttemptsRef.current = 0;
+        setReconnectAttempts(0);
+        consecutiveFailuresRef.current = 0;
+        reconnectThrottleTimeRef.current = 1000;
+        
+        // Reset manual disconnect flag when successfully connecting
+        manualDisconnectRef.current = false;
+        
+        // Send join message to register with the server
+        try {
+          ws.send(JSON.stringify({
+            type: 'join',
+            roomId,
+            playerName
+          }));
+        } catch (error) {
+          console.error('Error sending join message:', error);
+        }
+      };
+
+      // Handle incoming messages
+      ws.onmessage = handleWebSocketMessage;
+
+      // Handle connection closed
+      ws.onclose = (event) => {
+        console.log(`WebSocket closed: code=${event.code}, reason=${event.reason || 'No reason'}`);
+        
+        setIsConnected(false);
+        connectionInProgressRef.current = false;
+        
+        // Different behavior based on close reason
+        if (event.code === 1000 && event.reason === "User disconnected") {
+          console.log('User initiated disconnect, not reconnecting');
+          return;
+        }
+        
+        if (manualDisconnectRef.current) {
+          console.log('Manual disconnect flag set, not reconnecting');
+          return;
+        }
+        
+        // For unexpected closures, try to reconnect
+        console.log('Unexpected connection close, scheduling reconnect');
+        
+        // Add an error message
+        if (event.code !== 1000 || event.reason !== "Reconnecting") {
+          consecutiveFailuresRef.current++;
+          
+          setMessages(prev => [...prev, {
+            id: `connection_reset_${Date.now()}`,
+            type: 'system',
+            playerName: 'System',
+            content: `Connection lost. Attempting to reconnect...`,
+            timestamp: Date.now()
+          }]);
+          
+          // Schedule reconnect for unexpected closure
+          scheduleReconnect(roomId, playerName);
+        }
+      };
+
+      // Handle connection errors
+      ws.onerror = (error) => {
+        console.error('WebSocket error:', error);
+        setConnectionError('Connection error occurred');
+        connectionInProgressRef.current = false;
+        consecutiveFailuresRef.current++;
+        
+        // Only trigger reconnect if not already reconnecting
+        if (!isReconnecting) {
+          scheduleReconnect(roomId, playerName);
+        }
+      };
+    } catch (error) {
+      console.error('Error creating WebSocket:', error);
+      setConnectionError('Failed to establish connection');
+      connectionInProgressRef.current = false;
+      consecutiveFailuresRef.current++;
+      
+      // Schedule reconnect on error
+      scheduleReconnect(roomId, playerName);
+    }
+  }, [handleWebSocketMessage, scheduleReconnect, isReconnecting]);
+
+  // Remove heartbeat system
+  const startPingInterval = (ws: WebSocket) => {
+    // No-op - we don't want to use heartbeats anymore
   };
 
-  // Improved disconnect function with proper cleanup
+  // Improved disconnect function to prevent auto-reconnect
   const disconnect = useCallback(() => {
-    // Set the manual disconnect flag to prevent automatic reconnection
+    // Set flag that this is a manual disconnect and should not trigger auto-reconnect
     manualDisconnectRef.current = true;
+    
+    // Reset the cooldown and reconnection state
+    inCooldownRef.current = false;
+    
+    console.log('Manually disconnecting WebSocket connection');
     
     // Clear any pending reconnect attempts
     if (reconnectTimeoutRef.current) {
@@ -461,48 +729,108 @@ export const WebSocketProvider: React.FC<{children: React.ReactNode}> = ({ child
       reconnectTimeoutRef.current = null;
     }
     
-    // Reset states
-    setIsConnected(false);
+    // Clear cooldown timeout
+    if (cooldownTimeoutRef.current) {
+      clearTimeout(cooldownTimeoutRef.current);
+      cooldownTimeoutRef.current = null;
+    }
+    
+    // Reset connection state
     setReconnectAttempts(0);
-    setConnectionError(null);
+    setIsConnected(false);
     setCurrentPlayer(null);
     setPlayers([]);
     setMessages([]);
     setGameState(null);
     setLeaderboard(null);
     
-    // Close the WebSocket connection if it exists
+    // Close WebSocket connection if it exists
     if (wsRef.current) {
       try {
-        // Clean up ping interval
-        if (wsRef.current.pingInterval) {
-          clearInterval(wsRef.current.pingInterval);
-          wsRef.current.pingInterval = null;
-        }
-        
-        // Send a leave message before closing
+        // Only try to send a leave message if the connection is open
         if (wsRef.current.readyState === WebSocket.OPEN && roomId && playerName) {
-          console.log(`Sending leave message for room: ${roomId}, player: ${playerName}`);
+          // Tell the server we're leaving
           wsRef.current.send(JSON.stringify({
             type: "leave",
             roomId,
-            playerName
+            playerName,
+            disconnecting: true // Flag that this is a real disconnect, not a reconnect
           }));
+          
+          // Allow time for the server to process leave message
+          setTimeout(() => {
+            if (wsRef.current) {
+              wsRef.current.close(1000, "User disconnected");
+              wsRef.current = null;
+            }
+          }, 300);
+        } else {
+          // If not open, just close it directly
+          wsRef.current.close(1000, "User disconnected");
+          wsRef.current = null;
         }
-        
-        // Close the connection
-        wsRef.current.close(1000, "User disconnected");
+      } catch (e) {
+        console.error("Error disconnecting WebSocket:", e);
         wsRef.current = null;
-      } catch (error) {
-        console.error("Error during disconnect:", error);
       }
     }
     
-    // Clear stored room and player info
-    setRoomId("");
-    setPlayerName("");
-    sessionStorage.removeItem("playerName");
+    // Reset the room ID to disconnect from the current game
+    setRoomId('');
+    setPlayerName('');
+    
+    // Reset connection error
+    setConnectionError(null);
+    
+    // Reset the throttle time
+    reconnectThrottleTimeRef.current = 1000;
+    
+    // Reset consecutive failures count
+    consecutiveFailuresRef.current = 0;
   }, [roomId, playerName]);
+
+  // Add a connection stabilizer to prevent connection flapping
+  useEffect(() => {
+    // Only run this effect when connection state changes
+    if (!isConnected || !roomId || !playerName) return;
+    
+    // Keep track of connection stability
+    let connectionStabilityTimeout: NodeJS.Timeout | null = null;
+    
+    // Mark the connection as stable after 3 seconds of being connected
+    // This helps prevent the "flapping" connection behavior
+    connectionStabilityTimeout = setTimeout(() => {
+      if (isConnected && wsRef.current) {
+        console.log("Connection seems stable, resetting reconnect attempts");
+        setReconnectAttempts(0);
+        reconnectThrottleTimeRef.current = 1000; // Reset throttle time
+        consecutiveFailuresRef.current = 0; // Reset failure counter
+      }
+    }, 3000);
+    
+    return () => {
+      if (connectionStabilityTimeout) {
+        clearTimeout(connectionStabilityTimeout);
+      }
+    };
+  }, [isConnected, roomId, playerName]);
+
+  // Handle ready state toggle
+  const handleReady = useCallback(() => {
+    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
+      console.log("WebSocket not connected, attempting to reconnect...");
+      scheduleReconnect(roomId, playerName);
+      return;
+    }
+    
+    console.log("Sending ready message...");
+    wsRef.current.send(JSON.stringify({
+      type: "ready",
+      roomId,
+      playerName,
+      // Don't send isReady, let the server toggle it
+    }));
+  }, [roomId, playerName, scheduleReconnect]);
 
   // Handler for sending chat messages
   const sendMessage = useCallback((messageText: string) => {
@@ -511,13 +839,19 @@ export const WebSocketProvider: React.FC<{children: React.ReactNode}> = ({ child
       return;
     }
     
+    console.log(`Sending chat message: ${messageText}`);
+    
+    // If game is in active state, send as guess, otherwise as chat
+    const messageType = gameState && gameState.status === 'playing' ? "guess" : "chat";
+    
     wsRef.current.send(JSON.stringify({
-      type: "guess",
+      type: messageType,
       roomId,
       playerName,
-      guess: messageText
+      guess: messageText,
+      content: messageText
     }));
-  }, [roomId, playerName]);
+  }, [roomId, playerName, gameState]);
 
   // Handle drawing data
   const handleDraw = useCallback((drawingData: DrawingData) => {
@@ -526,25 +860,15 @@ export const WebSocketProvider: React.FC<{children: React.ReactNode}> = ({ child
       return;
     }
     
-    wsRef.current.send(JSON.stringify({
+    // Add timestamp to all drawing data to help with synchronization
+    const drawingWithMeta = {
       ...drawingData,
+      timestamp: Date.now(),
       roomId
-    }));
-  }, [roomId]);
-
-  // Handle ready state toggle
-  const handleReady = useCallback(() => {
-    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
-      console.log("WebSocket not connected, can't toggle ready state");
-      return;
-    }
+    };
     
-    wsRef.current.send(JSON.stringify({
-      type: "ready",
-      roomId,
-      playerName
-    }));
-  }, [roomId, playerName]);
+    wsRef.current.send(JSON.stringify(drawingWithMeta));
+  }, [roomId]);
 
   // Update game settings
   const updateGameSettings = useCallback((settings: GameSettings) => {
@@ -670,12 +994,6 @@ export const WebSocketProvider: React.FC<{children: React.ReactNode}> = ({ child
     return () => {
       // Clean up any WebSocket connection
       if (wsRef.current) {
-        // Clear any ping interval
-        if (wsRef.current.pingInterval) {
-          clearInterval(wsRef.current.pingInterval);
-          wsRef.current.pingInterval = null;
-        }
-        
         // Close the connection
         try {
           const ws = wsRef.current;
@@ -700,6 +1018,7 @@ export const WebSocketProvider: React.FC<{children: React.ReactNode}> = ({ child
     isConnected,
     connectionError,
     reconnectAttempts,
+    isReconnecting,
     players,
     messages,
     gameState,
@@ -713,7 +1032,8 @@ export const WebSocketProvider: React.FC<{children: React.ReactNode}> = ({ child
     handleReady,
     updateGameSettings,
     kickPlayer,
-    startNewGame
+    startNewGame,
+    retryConnection
   };
 
   return (
