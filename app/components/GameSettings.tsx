@@ -4,6 +4,7 @@ interface GameSettings {
   maxRounds: number;
   timePerRound: number;
   customWords: string[];
+  useOnlyCustomWords?: boolean;
 }
 
 interface GameSettingsProps {
@@ -14,8 +15,13 @@ interface GameSettingsProps {
 
 const GameSettings: React.FC<GameSettingsProps> = ({ settings, onUpdate, darkMode }) => {
   const [isOpen, setIsOpen] = useState(false);
-  const [localSettings, setLocalSettings] = useState(settings);
-  const [customWordsText, setCustomWordsText] = useState(settings.customWords.join('\n'));
+  const [localSettings, setLocalSettings] = useState({
+    ...settings,
+    useOnlyCustomWords: settings.useOnlyCustomWords || false
+  });
+  const [customWordsText, setCustomWordsText] = useState(
+    Array.isArray(settings.customWords) ? settings.customWords.join('\n') : ''
+  );
 
   // Apply limits to settings
   const MAX_ROUNDS = 20;
@@ -123,8 +129,25 @@ const GameSettings: React.FC<GameSettingsProps> = ({ settings, onUpdate, darkMod
                 darkMode ? 'bg-gray-700 text-white' : 'bg-gray-100 text-gray-900'
               } focus:outline-none focus:ring-2 focus:ring-indigo-500`}
             />
+            <div className="flex items-center mt-2">
+              <input
+                type="checkbox"
+                id="useOnlyCustomWords"
+                checked={localSettings.useOnlyCustomWords}
+                onChange={(e) => setLocalSettings(prev => ({
+                  ...prev,
+                  useOnlyCustomWords: e.target.checked
+                }))}
+                className="mr-2 h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-300 rounded"
+              />
+              <label htmlFor="useOnlyCustomWords" className="text-sm">
+                Use only custom words
+              </label>
+            </div>
             <p className="text-xs text-gray-400 mt-1">
-              These will be added to the default word list. Enter each word on a new line.
+              {localSettings.useOnlyCustomWords
+                ? "Only custom words will be used in the game."
+                : "Custom words will be added to the default word list."}
             </p>
           </div>
         </div>

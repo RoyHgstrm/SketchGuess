@@ -48,6 +48,7 @@ interface GameSettings {
   maxRounds: number;
   timePerRound: number;
   customWords: string[];
+  useOnlyCustomWords: boolean;
 }
 
 interface ExtendedWebSocket extends WebSocket {
@@ -95,9 +96,10 @@ interface WebSocketContextType {
 
 // Default game settings
 const DEFAULT_GAME_SETTINGS: GameSettings = {
-  maxRounds: 3,
-  timePerRound: 80,
-  customWords: []
+  maxRounds: 5,
+  timePerRound: 40,
+  customWords: [],
+  useOnlyCustomWords: false
 };
 
 // Create the context with default values
@@ -877,14 +879,23 @@ export const WebSocketProvider: React.FC<{children: React.ReactNode}> = ({ child
       return;
     }
     
+    // Ensure all properties are properly formatted
+    const formattedSettings = {
+      maxRounds: settings.maxRounds || DEFAULT_GAME_SETTINGS.maxRounds,
+      timePerRound: settings.timePerRound || DEFAULT_GAME_SETTINGS.timePerRound,
+      customWords: Array.isArray(settings.customWords) ? settings.customWords : [],
+      useOnlyCustomWords: settings.useOnlyCustomWords === true
+    };
+    
+    // Send the settings update to the server
     wsRef.current.send(JSON.stringify({
       type: "gameSettings",
       roomId,
-      settings
+      settings: formattedSettings
     }));
     
     // Also update local settings
-    setGameSettings(settings);
+    setGameSettings(formattedSettings);
     
     // Add a notification message
     setMessages(prev => [
@@ -897,6 +908,8 @@ export const WebSocketProvider: React.FC<{children: React.ReactNode}> = ({ child
         timestamp: Date.now()
       }
     ]);
+    
+    console.log('Updated game settings:', formattedSettings);
   }, [roomId]);
 
   // Add the startNewGame function

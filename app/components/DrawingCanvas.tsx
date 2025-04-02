@@ -87,7 +87,10 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({ darkMode }) => {
     let imageData = null;
     if (existingContext) {
       try {
-        imageData = existingContext.getImageData(0, 0, canvas.width/2, canvas.height/2);
+        // Capture the entire canvas, not just a portion
+        const currentWidth = canvas.width / 2;
+        const currentHeight = canvas.height / 2;
+        imageData = existingContext.getImageData(0, 0, currentWidth, currentHeight);
       } catch (e) {
         console.error('Could not save canvas state:', e);
       }
@@ -134,16 +137,36 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({ darkMode }) => {
     // Set initial background to white only if no existing drawing
     if (!imageData) {
       context.fillStyle = '#FFFFFF';
-      context.fillRect(0, 0, canvas.width, canvas.height);
+      context.fillRect(0, 0, canvas.width/2, canvas.height/2);
     } else {
       // Restore previous drawing
       try {
-        context.putImageData(imageData, 0, 0);
+        // Create a temporary canvas to properly scale the image data
+        const tempCanvas = document.createElement('canvas');
+        const tempContext = tempCanvas.getContext('2d');
+        if (tempContext) {
+          // Set temp canvas to the size of the original image data
+          tempCanvas.width = imageData.width;
+          tempCanvas.height = imageData.height;
+          
+          // Put the image data on the temp canvas
+          tempContext.putImageData(imageData, 0, 0);
+          
+          // First clear with white
+          context.fillStyle = '#FFFFFF';
+          context.fillRect(0, 0, canvas.width/2, canvas.height/2);
+          
+          // Now draw the temp canvas onto the main canvas, properly scaled
+          context.drawImage(tempCanvas, 0, 0, canvasWidth, canvasHeight);
+        } else {
+          // Fallback if temp context couldn't be created
+          context.putImageData(imageData, 0, 0);
+        }
       } catch (e) {
         console.error('Could not restore canvas state:', e);
         // Fallback to white background if restore fails
         context.fillStyle = '#FFFFFF';
-        context.fillRect(0, 0, canvas.width, canvas.height);
+        context.fillRect(0, 0, canvas.width/2, canvas.height/2);
       }
     }
     

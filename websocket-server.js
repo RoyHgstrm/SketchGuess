@@ -23,11 +23,11 @@ const DEFAULT_WORDS = [
 
 // Default game settings
 const DEFAULT_SETTINGS = {
-  timePerRound: 60,
-  customWords: null,
+  timePerRound: 40,
+  customWords: [],
   useOnlyCustomWords: false,
   minRounds: 1,
-  maxRounds: 100
+  maxRounds: 5
 };
 
 // Load leaderboard from file or create new one
@@ -243,20 +243,42 @@ function broadcastTimeUpdate(room) {
 }
 
 function getWordForRound(room) {
-  // Determine which word list to use
+  // First, ensure DEFAULT_WORDS is an array
+  if (!Array.isArray(DEFAULT_WORDS) || DEFAULT_WORDS.length === 0) {
+    console.error('DEFAULT_WORDS is not properly defined or is empty');
+    return 'drawing'; // Fallback word
+  }
+  
+  // Start with default words
   let wordList = DEFAULT_WORDS;
   
-  // If custom words exist and useOnlyCustomWords is true, use only custom words
-  if (room.settings.customWords && room.settings.customWords.length > 0) {
+  // Check if we have valid custom words
+  const hasCustomWords = Array.isArray(room.settings.customWords) && 
+                         room.settings.customWords.length > 0;
+  
+  if (hasCustomWords) {
+    // If useOnlyCustomWords is true, use only custom words
     if (room.settings.useOnlyCustomWords) {
+      console.log(`Using only custom words (${room.settings.customWords.length} words)`);
       wordList = room.settings.customWords;
     } else {
-      // Otherwise, combine default and custom words
+      // Otherwise combine both lists
+      console.log(`Combining default and custom word lists (${DEFAULT_WORDS.length} + ${room.settings.customWords.length} words)`);
       wordList = [...DEFAULT_WORDS, ...room.settings.customWords];
     }
   }
   
-  return wordList[Math.floor(Math.random() * wordList.length)];
+  // Pick a random word from the list
+  if (wordList.length === 0) {
+    console.warn('Word list is empty, using fallback word');
+    return 'drawing'; // Fallback word
+  }
+  
+  const randomIndex = Math.floor(Math.random() * wordList.length);
+  const word = wordList[randomIndex];
+  console.log(`Selected word: ${word} from ${wordList.length} total words`);
+  
+  return word;
 }
 
 function startNewTurn(room) {
@@ -696,21 +718,30 @@ wss.on("connection", (ws, req) => {
           
           console.log(`Updating game settings for room ${currentRoom.roomId}`, data.settings);
           
-          // Update room settings, ensuring we handle undefined or null values
-          currentRoom.settings = {
-            ...currentRoom.settings,
-            timePerRound: data.settings.timePerRound || currentRoom.settings.timePerRound,
-            maxRounds: data.settings.maxRounds || currentRoom.settings.maxRounds,
-            customWords: Array.isArray(data.settings.customWords) ? data.settings.customWords : (currentRoom.settings.customWords || []),
-            useOnlyCustomWords: data.settings.useOnlyCustomWords !== undefined ? data.settings.useOnlyCustomWords : currentRoom.settings.useOnlyCustomWords
+          // Validate settings values
+          const newSettings = {
+            // Use existing values as fallbacks
+            timePerRound: Number(data.settings.timePerRound) || currentRoom.settings.timePerRound,
+            maxRounds: Number(data.settings.maxRounds) || currentRoom.settings.maxRounds,
+            customWords: Array.isArray(data.settings.customWords) ? data.settings.customWords : [],
+            useOnlyCustomWords: data.settings.useOnlyCustomWords === true
           };
+          
+          // Apply min/max limits
+          if (newSettings.timePerRound < 30) newSettings.timePerRound = 30;
+          if (newSettings.timePerRound > 180) newSettings.timePerRound = 180;
+          if (newSettings.maxRounds < 1) newSettings.maxRounds = 1; 
+          if (newSettings.maxRounds > 20) newSettings.maxRounds = 20;
+          
+          // Update room settings
+          currentRoom.settings = newSettings;
           
           // Broadcast updated settings to all players
           currentRoom.players.forEach(player => {
             if (player.ws.readyState === WebSocket.OPEN) {
               player.ws.send(JSON.stringify({
                 type: "gameSettings",
-                settings: currentRoom.settings
+                settings: newSettings
               }));
             }
           });
