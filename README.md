@@ -33,7 +33,7 @@ Recent fixes and improvements:
 
 1. Clone this repository:
    ```
-   git clone https://github.com/yourusername/sketchguess.git
+   git clone https://github.com/RoyHgstrm/sketchguess.git
    cd sketchguess
    ```
 
