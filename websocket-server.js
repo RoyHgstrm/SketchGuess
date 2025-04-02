@@ -1083,27 +1083,33 @@ wss.on("connection", (ws, req) => {
     }
   });
 
-  ws.on("close", (code, reason) => {
-    console.log(`Connection closed with code ${code}${reason ? ': ' + reason : ''}`);
-    clearInterval(pingInterval);
-    
-    if (!currentRoom || !currentPlayer) return;
-    
-    // Add room and player info to the socket so handlePlayerLeave works
-    ws.roomId = currentRoom.roomId;
-    ws.playerName = currentPlayer.name;
-    
-    // Use our common handlePlayerLeave function for consistent behavior
-    handlePlayerLeave(ws);
-    
-    // Clear references
-    currentRoom = null;
-    currentPlayer = null;
+  // Handle connection closing
+  ws.on('close', () => {
+    // Mark player as disconnected
+    if (currentPlayer && currentRoom) {
+      console.log(`Player ${currentPlayer.name} disconnected from room ${currentRoom.roomId}`);
+      
+      // Call handlePlayerLeave to properly clean up the player
+      handlePlayerLeave(ws);
+      
+      // Clear current room and player references
+      currentRoom = null;
+      currentPlayer = null;
+    }
   });
 
   ws.on("error", (error) => {
     console.error("WebSocket error:", error);
-    clearInterval(pingInterval);
+    
+    // Handle player disconnection on error if they're in a room
+    if (currentPlayer && currentRoom) {
+      // Add room and player info to the socket so handlePlayerLeave works
+      ws.roomId = currentRoom.roomId;
+      ws.playerName = currentPlayer.name;
+      
+      // Use our common handlePlayerLeave function for consistent behavior
+      handlePlayerLeave(ws);
+    }
   });
   
   ws.on("pong", () => {
@@ -1183,7 +1189,7 @@ function handlePlayerLeave(ws) {
     broadcastSystemMessage(room, `${playerName} has disconnected`);
     
     // Handle drawer disconnection
-    if (player.isDrawing && room.gameState.status === 'playing') {
+    if (player === room.currentDrawer && room.isRoundActive) {
       console.log(`Drawer ${playerName} disconnected, ending current round`);
       endRound(room);
     }
@@ -1193,7 +1199,7 @@ function handlePlayerLeave(ws) {
       // Find new party leader from remaining active players
       assignNewPartyLeader(room);
     }
-
+    
     // Calculate number of active players (not disconnected)
     const activePlayerCount = room.players.filter(p => !p.disconnected).length;
     console.log(`Room ${roomId} has ${activePlayerCount} active players`);
@@ -1217,9 +1223,9 @@ function handlePlayerLeave(ws) {
       console.log(`Room ${roomId} has no active players, but will be preserved temporarily`);
       
       // If game is in progress, end it
-      if (room.gameState.status === 'playing') {
+      if (room.isRoundActive) {
         console.log(`Game in room ${roomId} ended due to all players disconnecting`);
-        endGame(room);
+        endRound(room);
       }
     }
     
@@ -1229,6 +1235,29 @@ function handlePlayerLeave(ws) {
     console.error("Error handling player leave:", error);
   }
 }
+
+// Set up interval for ping/pong heartbeat to detect dead connections
+const heartbeatInterval = setInterval(() => {
+  wss.clients.forEach(ws => {
+    if (ws.isAlive === false) {
+      console.log('Terminating inactive connection');
+      return ws.terminate();
+    }
+    
+    ws.isAlive = false;
+    try {
+      ws.ping();
+    } catch (error) {
+      console.error('Error sending ping:', error);
+      ws.terminate();
+    }
+  });
+}, 30000); // Check every 30 seconds
+
+// Clean up the interval when the server is closed
+wss.on('close', () => {
+  clearInterval(heartbeatInterval);
+});
 
 const PORT = process.env.PORT || 8080;
 server.listen(PORT, () => {
