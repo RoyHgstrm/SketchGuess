@@ -97,6 +97,55 @@ const server = createServer((req, res) => {
     const topPlayers = getTopPlayers();
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(topPlayers));
+  } else if (req.url === "/admin/stats" && req.method === "GET") {
+    // Endpoint for admin stats
+    const serverStartTime = new Date(Date.now() - process.uptime() * 1000).toISOString();
+    
+    // Count active connections
+    let activeConnections = 0;
+    wss.clients.forEach(client => {
+      if (client.readyState === WebSocket.OPEN) {
+        activeConnections++;
+      }
+    });
+    
+    // Prepare active rooms list with more details
+    const activeRoomsList = [];
+    rooms.forEach((room, roomId) => {
+      const roomData = {
+        roomId,
+        playerCount: room.players.length,
+        isActive: room.isRoundActive || false,
+        currentRound: room.roundNumber !== undefined ? room.roundNumber + 1 : 0,
+        maxRounds: room.settings?.maxRounds || 0,
+        timeLeft: room.timeLeft || 0,
+        players: room.players.map(p => ({
+          name: p.name,
+          score: p.score || 0,
+          isReady: p.isReady || false,
+          isDrawing: p === room.currentDrawer,
+          correctGuess: p.correctGuess || false
+        })),
+        currentWord: room.currentWord,
+        settings: room.settings
+      };
+      activeRoomsList.push(roomData);
+    });
+    
+    // Create stats object
+    const stats = {
+      uptime: Math.floor(process.uptime()),
+      totalConnections: totalConnectionCount,
+      activeConnections,
+      totalRooms: totalRoomCount,
+      activeRooms: rooms.size,
+      startTime: serverStartTime,
+      defaultWords: DEFAULT_WORDS,
+      activeRoomsList
+    };
+    
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(stats));
   } else {
     res.writeHead(404);
     res.end();
@@ -105,6 +154,10 @@ const server = createServer((req, res) => {
 
 const wss = new WebSocketServer({ server });
 const rooms = new Map();
+
+// Statistics tracking
+let totalConnectionCount = 0;
+let totalRoomCount = 0;
 
 // Timer functions
 function startTimer(room) {
@@ -521,107 +574,58 @@ function broadcastPlayerList(room) {
 
 wss.on("connection", (ws, req) => {
   console.log("New connection attempt from", req.socket.remoteAddress);
-
+  
+  // Increment total connection count
+  totalConnectionCount++;
+  
+  // Variables to track the current room and player for this connection
   let currentRoom = null;
   let currentPlayer = null;
 
-  // Send heartbeat to detect disconnections quickly
-  const pingInterval = setInterval(() => {
-    if (ws.readyState === WebSocket.OPEN) {
-      ws.ping();
-    }
-  }, 30000);
-
+  // Add a ping-pong mechanism
+  ws.isAlive = true;
+  ws.on("pong", () => {
+    ws.isAlive = true;
+  });
+  
   ws.on("message", (message) => {
     try {
-      const data = JSON.parse(message);
+      const data = JSON.parse(message.toString());
+      const type = data.type;
       
-      switch (data.type) {
+      switch (type) {
         case "join": {
           const roomId = data.roomId;
-          console.log(`Player ${data.playerName} joining room ${roomId}`);
           
-          // Check if player already exists in the room
-          const existingRoom = rooms.get(roomId);
-          if (existingRoom) {
-            // Check if game is in progress and player is not rejoining
-            if (existingRoom.isRoundActive) {
-              const existingPlayer = existingRoom.players.find(p => p.name === data.playerName);
-              if (!existingPlayer) {
-                // New player trying to join an active game
-                if (ws.readyState === WebSocket.OPEN) {
-                  ws.send(JSON.stringify({ 
-                    type: "error", 
-                    message: "Cannot join a game in progress. Please try another room or wait until this game ends."
-                  }));
-                }
-                return;
-              }
-            }
+          // Get the room or create a new one
+          let existingRoom = rooms.get(roomId);
+          
+          if (!existingRoom) {
+            console.log(`Creating new room ${roomId}`);
             
-            const existingPlayer = existingRoom.players.find(p => p.name === data.playerName);
-            if (existingPlayer) {
-              console.log(`Player ${data.playerName} reconnecting to room ${roomId}`);
-              // Update WebSocket reference for existing player
-              existingPlayer.ws = ws;
-              currentPlayer = existingPlayer;
-              currentRoom = existingRoom;
-              
-              // Send current game state to reconnecting player
-              if (ws.readyState === WebSocket.OPEN) {
-                ws.send(JSON.stringify({ type: "joined", roomId }));
-                ws.send(JSON.stringify({
-                  type: "playerList",
-                  players: existingRoom.players.map(p => ({
-                    name: p.name,
-                    score: p.score,
-                    isReady: p.isReady
-                  }))
-                }));
-                
-                // Send current game settings
-                ws.send(JSON.stringify({
-                  type: "gameSettings",
-                  settings: existingRoom.settings
-                }));
-                
-                if (existingRoom.isRoundActive) {
-                  if (existingRoom.currentDrawer) {
-                    ws.send(JSON.stringify({
-                      type: "newDrawer",
-                      drawer: existingRoom.currentDrawer.name
-                    }));
-                    
-                    if (existingRoom.currentDrawer === currentPlayer) {
-                      ws.send(JSON.stringify({
-                        type: "drawerWord",
-                        word: existingRoom.currentWord
-                      }));
-                    }
-                  }
-                  
-                  ws.send(JSON.stringify({
-                    type: "timeUpdate",
-                    timeLeft: existingRoom.timeLeft
-                  }));
-                }
-              }
-              
-              // Notify other players of reconnection
-              existingRoom.players.forEach(player => {
-                if (player !== currentPlayer && player.ws.readyState === WebSocket.OPEN) {
-                  player.ws.send(JSON.stringify({
-                    type: "system",
-                    content: `${currentPlayer ? currentPlayer.name : ""} reconnected to the game`
-                  }));
-                }
-              });
-              
-              return;
-            }
+            // Increment total room count when creating a new room
+            totalRoomCount++;
+            
+            // Create new room with initial settings
+            const newRoom = {
+              roomId,
+              players: [],
+              settings: {
+                timePerRound: DEFAULT_SETTINGS.timePerRound,
+                maxRounds: DEFAULT_SETTINGS.maxRounds,
+                customWords: DEFAULT_SETTINGS.customWords ? [...DEFAULT_SETTINGS.customWords] : [],
+                useOnlyCustomWords: DEFAULT_SETTINGS.useOnlyCustomWords
+              },
+              roundNumber: 0,
+              timeLeft: 0,
+              isRoundActive: false,
+              status: 'waiting'
+            };
+            rooms.set(roomId, newRoom);
+            existingRoom = newRoom;
           }
-
-          // Create new player
+          
+          currentRoom = existingRoom;
           currentPlayer = { 
             name: data.playerName, 
             score: 0, 
@@ -630,24 +634,6 @@ wss.on("connection", (ws, req) => {
             correctGuess: false 
           };
           
-          // Create new room if it doesn't exist
-          if (!rooms.has(roomId)) {
-            console.log(`Creating new room ${roomId}`);
-            rooms.set(roomId, {
-              roomId,
-              players: [],
-              currentDrawer: null,
-              currentWord: null,
-              roundNumber: 0,
-              settings: {...DEFAULT_SETTINGS},
-              roundTimer: null,
-              timeLeft: 0,
-              isRoundActive: false,
-              status: 'waiting'
-            });
-          }
-          
-          currentRoom = rooms.get(roomId);
           currentRoom.players.push(currentPlayer);
 
           // Send confirmation to client
