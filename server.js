@@ -21,14 +21,14 @@ const viteDevServer =
         })
       );
 
-// Use path.resolve for the production build path
-const productionBuildPath = path.resolve(__dirname, 'build', 'server', 'index.js');
+// Revert to relative path import for production build
+// const productionBuildPath = path.resolve(__dirname, 'build', 'server', 'index.js');
 
 const remixHandler = createRequestHandler({
   build: viteDevServer
     ? () => viteDevServer.ssrLoadModule('virtual:remix/server-build')
-    // @ts-ignore Import using the resolved path
-    : await import(productionBuildPath),
+    // @ts-ignore Import using the relative path again
+    : await import('./build/server/index.js'),
 });
 
 const app = express();
