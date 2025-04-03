@@ -78,8 +78,11 @@ export default function Admin() {
     setRefreshing(true);
     setError(null);
     try {
-      // Use direct port for WebSocket server
-      const leaderboardUrl = "http://localhost:8080/leaderboard";
+      // Use relative URLs to adapt to any environment (including Docker)
+      // The protocol, hostname, and port will be derived from the current page location
+      const baseUrl = `${window.location.protocol}//${window.location.host}`;
+      
+      const leaderboardUrl = `${baseUrl}/leaderboard`;
       console.log("Fetching leaderboard from:", leaderboardUrl);
       
       // Fetch leaderboard from the server
@@ -90,8 +93,7 @@ export default function Admin() {
       const leaderboardData = await leaderboardResponse.json();
       setTopPlayers(Array.isArray(leaderboardData) ? leaderboardData : []);
 
-      // Use direct port for WebSocket server
-      const statsUrl = "http://localhost:8080/admin/stats";
+      const statsUrl = `${baseUrl}/admin/stats`;
       console.log("Fetching stats from:", statsUrl);
       
       // Fetch real server stats from the new endpoint
@@ -108,9 +110,9 @@ export default function Admin() {
       console.error("Error fetching data:", err);
       setError(err instanceof Error ? err.message : "An unknown error occurred");
       
-      // If we can't connect to the WebSocket server, show an error message
+      // If we can't connect, show a better error message
       if (err instanceof Error && err.message.includes("fetch")) {
-        setError("Cannot connect to WebSocket server. Make sure the server is running on port 8080.");
+        setError("Cannot connect to server. Make sure the server is running and accessible.");
       }
     } finally {
       setRefreshing(false);

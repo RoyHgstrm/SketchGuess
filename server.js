@@ -33,6 +33,11 @@ const remixHandler = createRequestHandler({
 
 const app = express();
 
+// Create exported functions to expose admin APIs
+export let getServerStats;
+export let getLeaderboard;
+export let getActiveRoomsList;
+
 // Handle asset requests
 if (viteDevServer) {
   app.use(viteDevServer.middlewares);
@@ -48,6 +53,25 @@ if (viteDevServer) {
   );
    app.use(express.static(path.join(__dirname, 'public'), { maxAge: '1h' }));
 }
+
+// Add API routes for admin dashboard
+app.get('/leaderboard', (req, res) => {
+  if (typeof getLeaderboard === 'function') {
+    res.json(getLeaderboard());
+  } else {
+    res.status(503).json({ error: 'Leaderboard service not available' });
+  }
+});
+
+app.get('/admin/stats', (req, res) => {
+  if (typeof getServerStats === 'function' && typeof getActiveRoomsList === 'function') {
+    const stats = getServerStats();
+    stats.activeRoomsList = getActiveRoomsList();
+    res.json(stats);
+  } else {
+    res.status(503).json({ error: 'Stats service not available' });
+  }
+});
 
 // Handle Remix requests
 app.all('*', remixHandler);
@@ -66,7 +90,12 @@ const wss = new WebSocketServer({ server }); // Attach to the existing HTTP serv
 console.log(`WebSocket server attaching to HTTP server on port ${port}`);
 
 // Run the existing WebSocket server logic, passing the created wss instance
-runWebSocketServerLogic(wss);
+const wsServerExports = runWebSocketServerLogic(wss);
+
+// Store the exported admin functions for use in Express routes
+getServerStats = wsServerExports.getServerStats;
+getLeaderboard = wsServerExports.getLeaderboard;
+getActiveRoomsList = wsServerExports.getActiveRoomsList;
 // ----------------------------------
 
 server.listen(port, host, () => {
