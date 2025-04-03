@@ -142,12 +142,17 @@ const getWebSocketURL = (roomId: string) => {
     if (typeof window !== 'undefined' && window.location) {
       // Get protocol (http -> ws, https -> wss)
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      // Default to same host but different port
+      // Always use the same host
       const host = window.location.hostname;
-      // Default WebSocket port is 8080
-      const port = '8080';
       
-      const baseUrl = `${protocol}//${host}:${port}`;
+      // For Docker: Use the same port as the HTTP server since we've integrated the WebSocket server
+      // This fixes connection issues in containerized environments
+      const port = window.location.port;
+      
+      // Only add port if it exists
+      const portPart = port ? `:${port}` : '';
+      const baseUrl = `${protocol}//${host}${portPart}`;
+      
       console.log(`Derived WebSocket URL: ${baseUrl}`);
       return `${baseUrl}?roomId=${encodeURIComponent(roomId)}`;
     }

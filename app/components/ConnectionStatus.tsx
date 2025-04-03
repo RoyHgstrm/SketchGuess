@@ -1,7 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { useWebSocket } from '~/context/WebSocketContext';
 
-const ConnectionStatus: React.FC = () => {
+interface ConnectionStatusProps {
+  darkMode?: boolean;
+}
+
+const ConnectionStatus: React.FC<ConnectionStatusProps> = ({ darkMode = true }) => {
   const { 
     isConnected, 
     connectionError, 
