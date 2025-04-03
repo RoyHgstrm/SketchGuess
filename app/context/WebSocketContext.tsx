@@ -48,7 +48,7 @@ interface GameSettings {
   maxRounds: number;
   timePerRound: number;
   customWords: string[];
-  useOnlyCustomWords: boolean;
+  useOnlyCustomWords?: boolean;
 }
 
 interface ExtendedWebSocket extends WebSocket {
@@ -205,7 +205,7 @@ export const WebSocketProvider: React.FC<{children: React.ReactNode}> = ({ child
   // Track last few connections to detect connection bursts
   const recentConnectionAttemptsRef = useRef<number[]>([]);
   const MAX_RECENT_CONNECTIONS = 5;
-  const MIN_CONNECTION_INTERVAL_MS = 2000; // 2 seconds between connections
+  const MIN_CONNECTION_INTERVAL_MS = 500; // 500ms between connections
   
   // Function to track connection attempts and detect if connecting too frequently
   const isConnectingTooFrequently = useCallback(() => {
@@ -222,8 +222,8 @@ export const WebSocketProvider: React.FC<{children: React.ReactNode}> = ({ child
       const oldestTimestamp = Math.min(...recentConnectionAttemptsRef.current);
       const timeWindow = now - oldestTimestamp;
       
-      // If we've made 5 or more connections in less than 10 seconds, that's too frequent
-      if (timeWindow < 10000) {
+      // Less restrictive: Only throttle if we've made 5 or more connections in less than 3 seconds
+      if (timeWindow < 3000) {
         console.warn(`Too many connection attempts: ${recentConnectionAttemptsRef.current.length} in ${timeWindow}ms`);
         return true;
       }
@@ -234,10 +234,17 @@ export const WebSocketProvider: React.FC<{children: React.ReactNode}> = ({ child
       const mostRecentTimestamp = Math.max(...recentConnectionAttemptsRef.current);
       const timeSinceLastConnect = now - mostRecentTimestamp;
       
-      if (timeSinceLastConnect < MIN_CONNECTION_INTERVAL_MS) {
+      // Less restrictive: Allow connections every 500ms instead of 2000ms
+      if (timeSinceLastConnect < 500) {
         console.warn(`Connection attempt too soon after previous: ${timeSinceLastConnect}ms`);
         return true;
       }
+    }
+    
+    // If we're in cooldown, that's also too frequent
+    if (inCooldownRef.current) {
+      console.warn('Connection attempt during cooldown period');
+      return true;
     }
     
     // If we got here, connection frequency is acceptable
@@ -281,7 +288,36 @@ export const WebSocketProvider: React.FC<{children: React.ReactNode}> = ({ child
       // Regular message handling
       switch (data.type) {
         case 'playerList':
-          setPlayers(data.players || []);
+          const newPlayers: Player[] = data.players || [];
+          setPlayers(newPlayers);
+          
+          // Update currentPlayer based on the latest list and stored playerName
+          if (playerName && newPlayers.length > 0) {
+            const me = newPlayers.find((p: Player) => p.name === playerName);
+            if (me) {
+              // Update with full details from the list
+              // Ensure we maintain the correct structure matching the Player interface
+              const updatedCurrentPlayer: Player = {
+                id: me.id || me.name, // Use id, fallback to name
+                name: me.name,
+                score: me.score || 0,
+                isReady: me.isReady || false,
+                isDrawing: me.isDrawing || false,
+                hasGuessedCorrectly: me.hasGuessedCorrectly || false,
+                isPartyLeader: me.isPartyLeader || false
+              };
+              setCurrentPlayer(updatedCurrentPlayer);
+              console.log("Updated currentPlayer from playerList:", updatedCurrentPlayer);
+            } else {
+              // If 'me' is not in the list (e.g., kicked or disconnected)
+              // Nullify currentPlayer if they are no longer in the list received from server
+              console.warn(`Current player ${playerName} not found in received playerList. Setting currentPlayer to null.`);
+              setCurrentPlayer(null);
+            }
+          } else if (newPlayers.length === 0) {
+              // If the player list is empty, nullify currentPlayer
+              setCurrentPlayer(null);
+          }
           break;
         case 'playerUpdate':
           // This is a message specifically about the current player
@@ -340,17 +376,20 @@ export const WebSocketProvider: React.FC<{children: React.ReactNode}> = ({ child
           break;
         case 'gameLeaderboard':
           console.log('Received game leaderboard:', data.players);
-          setLeaderboard(data.players);
+          setLeaderboard(data.players || []);
           
-          // Add system message about game end
-          const leaderboardMessage: ChatMessage = {
-            id: `leaderboard_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-            type: 'system',
-            playerName: 'System',
-            content: data.message || 'Game has ended. Check the leaderboard for final scores.',
-            timestamp: Date.now()
-          };
-          setMessages(prev => [...prev, leaderboardMessage]);
+          // Optionally, add a system message if one wasn't provided by the server
+          if (data.message) {
+            const leaderboardMessage: ChatMessage = {
+              id: `leaderboard_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+              type: 'system',
+              playerName: 'System',
+              content: data.message,
+              timestamp: Date.now()
+            };
+            setMessages(prev => [...prev, leaderboardMessage]);
+          }
+          // Game state should be updated separately by the 'gameState' message with status 'ended'
           break;
         case 'clear':
           // Canvas clearing event is handled by the DrawingCanvas component
@@ -397,9 +436,15 @@ export const WebSocketProvider: React.FC<{children: React.ReactNode}> = ({ child
           }]);
           break;
         case 'timeUpdate':
-          // Just handling time updates through logging
-          // The actual time updates are reflected in the gameState
-          console.log(`Time update: ${data.timeLeft}s remaining`);
+          // Update the game state with the new time
+          setGameState(prevState => {
+            if (!prevState) return prevState;
+            
+            return {
+              ...prevState,
+              timeLeft: data.timeLeft
+            };
+          });
           break;
         case 'error':
           // Handle server error messages
@@ -415,13 +460,59 @@ export const WebSocketProvider: React.FC<{children: React.ReactNode}> = ({ child
             timestamp: Date.now()
           }]);
           break;
+        case 'joined': {
+          console.log('Successfully joined room:', data.roomId);
+          
+          // Reset connection errors and attempts on successful join
+          setConnectionError(null);
+          reconnectAttemptsRef.current = 0;
+          setReconnectAttempts(0);
+          consecutiveFailuresRef.current = 0;
+          setIsReconnecting(false);
+
+          // Set the current player based on details from the server
+          if (data.playerDetails) {
+            console.log('Setting current player from server details:', data.playerDetails);
+            setCurrentPlayer({
+              id: data.playerDetails.id || data.playerDetails.name, // Use ID or fallback to name
+              name: data.playerDetails.name,
+              score: 0, // Score will come via playerList or gameState
+              isReady: false,
+              isDrawing: false,
+              hasGuessedCorrectly: false,
+              isPartyLeader: data.playerDetails.isPartyLeader || false
+            });
+          } else {
+            // Fallback if details are missing (should not happen with server changes)
+            console.warn('Joined message missing playerDetails, attempting fallback');
+            setCurrentPlayer(prev => prev ? { ...prev, name: playerName } : {
+              id: playerName,
+              name: playerName,
+              score: 0,
+              isReady: false,
+              isDrawing: false,
+              hasGuessedCorrectly: false,
+              isPartyLeader: false
+            });
+          }
+          break;
+        }
+        case 'incorrectGuess':
+          setMessages(prev => [...prev, {
+            id: `incorrect_${data.guesserName}_${Date.now()}`,
+            type: 'system', // Display as a system message
+            playerName: 'System',
+            content: `${data.guesserName} guessed incorrectly.`,
+            timestamp: Date.now()
+          }]);
+          break;
         default:
           console.log('Unhandled message type:', data.type);
       }
     } catch (error) {
       console.error('Error processing WebSocket message:', error);
     }
-  }, [currentPlayer]);
+  }, [playerName]);
 
   // Manual retry function for when automatic reconnects fail
   const retryConnection = useCallback(() => {
@@ -568,6 +659,22 @@ export const WebSocketProvider: React.FC<{children: React.ReactNode}> = ({ child
     setRoomId(roomId);
     setPlayerName(playerName);
 
+    // Check if we're connecting too frequently
+    if (isConnectingTooFrequently()) {
+      console.log('Connecting too frequently, enforcing client-side cooldown');
+      setConnectionError('Connecting too frequently. Please wait a moment before trying again.');
+      
+      // Enforce a cooldown period
+      if (!inCooldownRef.current) {
+        enterCooldownMode(3000);
+      }
+      
+      return;
+    }
+
+    // Record this connection attempt
+    recordConnectionAttempt();
+
     // If a connection attempt is already in progress, don't start another
     if (connectionInProgressRef.current) {
       console.log('Connection already in progress, skipping...');
@@ -634,6 +741,11 @@ export const WebSocketProvider: React.FC<{children: React.ReactNode}> = ({ child
         // Reset manual disconnect flag when successfully connecting
         manualDisconnectRef.current = false;
         
+        // Ensure connection error is cleared on successful connection
+        setTimeout(() => {
+          setConnectionError(null);
+        }, 100);
+        
         // Send join message to register with the server
         try {
           ws.send(JSON.stringify({
@@ -655,6 +767,16 @@ export const WebSocketProvider: React.FC<{children: React.ReactNode}> = ({ child
         
         setIsConnected(false);
         connectionInProgressRef.current = false;
+        
+        // Check for throttling close code (4000)
+        if (event.code === 4000 && event.reason === "Connection throttled") {
+          console.log('Connection throttled by server, entering cooldown');
+          setConnectionError(`Connection throttled by server. Please wait before reconnecting.`);
+          
+          // Enter cooldown mode for 5 seconds on throttling
+          enterCooldownMode(5000);
+          return;
+        }
         
         // Different behavior based on close reason
         if (event.code === 1000 && event.reason === "User disconnected") {
@@ -912,41 +1034,35 @@ export const WebSocketProvider: React.FC<{children: React.ReactNode}> = ({ child
     console.log('Updated game settings:', formattedSettings);
   }, [roomId]);
 
-  // Add the startNewGame function
+  // Replace the existing startNewGame function
   const startNewGame = useCallback(() => {
-    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN && currentPlayer?.isPartyLeader) {
-      wsRef.current.send(JSON.stringify({
-        type: 'startNewGame'
-      }));
-      
-      // Clear leaderboard
-      setLeaderboard(null);
-      
-      // Add notification
-      setMessages(prev => [
-        ...prev, 
-        {
-          id: Date.now().toString(),
-          type: 'system',
-          playerName: 'System',
-          content: 'Starting a new game...',
-          timestamp: Date.now()
-        }
-      ]);
-    } else if (!currentPlayer?.isPartyLeader) {
-      // Add notification that only the leader can start a new game
-      setMessages(prev => [
-        ...prev, 
-        {
-          id: Date.now().toString(),
-          type: 'system',
-          playerName: 'System',
-          content: 'Only the party leader can start a new game',
-          timestamp: Date.now()
-        }
-      ]);
+    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
+      console.log("WebSocket not connected, cannot start new game");
+      setConnectionError("Not connected to server. Please wait or refresh.");
+      return;
     }
-  }, [currentPlayer]);
+
+    if (!currentPlayer?.isPartyLeader) {
+      console.log("Only party leader can start a new game");
+      setMessages(prev => [...prev, { 
+        id: Date.now().toString(), 
+        type: 'system', 
+        playerName: 'System', 
+        content: 'Only the party leader can start a new game.',
+        timestamp: Date.now() 
+      }]);
+      return;
+    }
+    
+    console.log('Requesting to start a new game...');
+    wsRef.current.send(JSON.stringify({
+      type: 'startNewGameRequest' // Send the new request type
+    }));
+    
+    // Clear the leaderboard from the client state immediately
+    setLeaderboard(null);
+
+  }, [currentPlayer]); // Depend on currentPlayer to check isPartyLeader
 
   // Kick player function
   const kickPlayer = useCallback((playerNameToKick: string) => {

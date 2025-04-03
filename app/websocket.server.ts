@@ -388,9 +388,10 @@ wss.on('connection', (ws: WebSocket, req) => {
 
   ws.on('message', (message: string) => {
     try {
-      const data = JSON.parse(message) as Message;
-      
-      switch (data.type) {
+      const data = JSON.parse(message);
+      const type = data.type as 'join' | 'guess' | 'draw' | 'clear' | 'ready' | 'system' | 'gameSettings' | 'updateSettings';
+
+      switch (type) {
         case 'join': {
           const { roomId, playerName } = data;
           
@@ -458,10 +459,15 @@ wss.on('connection', (ws: WebSocket, req) => {
         case 'updateSettings': {
           if (!currentPlayer || !currentRoom || !currentPlayer.isPartyLeader) return;
           
-          const newSettings = data.settings as Partial<GameSettings>;
+          interface SettingsMessage {
+            type: 'updateSettings';
+            settings: Partial<GameSettings>;
+          }
+          
+          const settingsData = data as SettingsMessage;
           currentRoom.settings = {
             ...currentRoom.settings,
-            ...newSettings
+            ...settingsData.settings
           };
 
           broadcastToRoom(currentRoom, {
@@ -474,10 +480,17 @@ wss.on('connection', (ws: WebSocket, req) => {
         case 'draw': {
           if (!currentPlayer || !currentRoom || !currentPlayer.isDrawing) return;
           
+          // Create a drawing data object with timestamp and drawer ID
+          const drawingData = {
+            ...data,
+            timestamp: Date.now(),
+            drawerId: currentPlayer.id
+          };
+          
           // Broadcast drawing data to other players
           currentRoom.players.forEach(player => {
             if (player !== currentPlayer && player.ws.readyState === WebSocket.OPEN) {
-              player.ws.send(message);
+              player.ws.send(JSON.stringify(drawingData));
             }
           });
           break;
@@ -512,16 +525,13 @@ wss.on('connection', (ws: WebSocket, req) => {
               endRound(currentRoom);
             }
           } else {
-            // Wrong guess
+            // Wrong guess - broadcast to all players
             broadcastToRoom(currentRoom, {
               type: 'chat',
-              message: {
-                id: generateId(),
-                type: 'guess',
-                playerName: currentPlayer.name,
-                content: data.guess,
-                timestamp: Date.now()
-              }
+              id: generateId(),
+              playerName: currentPlayer.name,
+              content: data.guess,
+              timestamp: Date.now()
             });
           }
           break;
@@ -531,13 +541,12 @@ wss.on('connection', (ws: WebSocket, req) => {
           // Chat messages from players to everyone
           if (!currentRoom || !currentPlayer) return;
           
-          currentRoom.players.forEach(player => {
-            if (player.ws.readyState === WebSocket.OPEN) {
-              player.ws.send(JSON.stringify({
-                type: "system",
-                content: `${currentPlayer?.name || ""}: ${data.content}`
-              }));
-            }
+          broadcastToRoom(currentRoom, {
+            type: "system",
+            id: generateId(),
+            playerName: currentPlayer.name,
+            content: data.content,
+            timestamp: Date.now()
           });
           break;
         }

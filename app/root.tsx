@@ -10,6 +10,7 @@ import {
 import { cssBundleHref } from "@remix-run/css-bundle";
 import type { LinksFunction } from "@remix-run/node";
 import { WebSocketProvider } from "./context/WebSocketContext";
+import ConnectionStatus from "./components/ConnectionStatus";
 
 import "./tailwind.css";
 import animationsStyle from "~/styles/animations.css";
@@ -119,6 +120,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
       <body>
         <WebSocketProvider>
           {children}
+          <ConnectionStatus />
         </WebSocketProvider>
         <ScrollRestoration />
         <Scripts />

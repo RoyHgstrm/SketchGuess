@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { useWebSocket } from '~/context/WebSocketContext';
 import GameSettings from './GameSettings';
 
@@ -34,6 +34,7 @@ const PlayerList: React.FC<PlayerListProps> = ({ darkMode }) => {
   const minPlayers = 2;
   const canStartGame = players.length >= minPlayers && allPlayersReady;
   const isGameInProgress = gameState?.status === 'playing';
+  const isGameEnded = gameState?.status === 'ended';
 
   const handleKickPlayer = (playerName: string) => {
     if (amIPartyLeader && playerName !== currentPlayer?.name) {
@@ -44,12 +45,12 @@ const PlayerList: React.FC<PlayerListProps> = ({ darkMode }) => {
   };
 
   return (
-    <div className="h-full flex flex-col">
+    <div className="h-full flex flex-col p-2 md:p-4">
       {/* Header */}
-      <div className="mb-4">
+      <div className="mb-2 md:mb-4">
         <div className="flex justify-between items-center mb-2">
           <h3 className="text-lg font-semibold">Players</h3>
-          {!isGameInProgress && (
+          {!isGameInProgress && !isGameEnded && (
             <div className="flex items-center space-x-2">
               <span className={`text-sm ${
                 canStartGame ? 'text-green-500' : 
@@ -65,10 +66,13 @@ const PlayerList: React.FC<PlayerListProps> = ({ darkMode }) => {
           {isGameInProgress && (
             <div className="text-sm text-green-400">Game in progress</div>
           )}
+          {isGameEnded && (
+            <div className="text-sm text-purple-400">Game Ended</div>
+          )}
         </div>
         <div className="flex items-center space-x-2 text-sm text-gray-400">
           <span>{players.length} player{players.length !== 1 ? 's' : ''} in room</span>
-          {!isGameInProgress && (
+          {!isGameInProgress && !isGameEnded && (
             <>
               <span>•</span>
               <span>{players.filter(p => p.isReady).length} ready</span>
@@ -80,12 +84,18 @@ const PlayerList: React.FC<PlayerListProps> = ({ darkMode }) => {
               <span>Round {gameState?.currentRound || 0}/{gameState?.maxRounds || 0}</span>
             </>
           )}
+          {isGameEnded && (
+             <>
+               <span>•</span>
+               <span>Final Scores</span>
+             </>
+          )}
         </div>
       </div>
 
       {/* Party Leader Badge - Show if user is party leader */}
       {amIPartyLeader && (
-        <div className="mb-4 py-2 px-4 bg-indigo-600/20 border border-indigo-600/30 rounded-lg text-center">
+        <div className="mb-2 md:mb-4 py-2 px-4 bg-indigo-600/20 border border-indigo-600/30 rounded-lg text-center">
           <span className="text-indigo-400 font-medium flex items-center justify-center">
             <span className="mr-2">👑</span> You are the Party Leader
           </span>
@@ -93,7 +103,7 @@ const PlayerList: React.FC<PlayerListProps> = ({ darkMode }) => {
         </div>
       )}
 
-      {/* Game Settings (only for party leader and when not in a game) */}
+      {/* Game Settings */}
       {amIPartyLeader && !isGameInProgress && (
         <div className="mb-4">
           <GameSettings
@@ -105,10 +115,10 @@ const PlayerList: React.FC<PlayerListProps> = ({ darkMode }) => {
       )}
 
       {/* Ready Button - only show when not in a game */}
-      {!isGameInProgress && (
+      {!isGameInProgress && !isGameEnded && (
         <button
           onClick={handleReady}
-          className={`mb-4 w-full py-3 px-4 rounded-lg transition-all ${
+          className={`mb-2 md:mb-4 w-full py-3 px-4 rounded-lg transition-all ${
             amIReady
               ? 'bg-green-600 hover:bg-green-700 text-white'
               : 'bg-yellow-600 hover:bg-yellow-700 text-white'
@@ -139,7 +149,7 @@ const PlayerList: React.FC<PlayerListProps> = ({ darkMode }) => {
 
       {/* Game Stats - show when in game */}
       {isGameInProgress && (
-        <div className="mb-4 p-3 rounded-lg bg-gray-700/30 border border-gray-600/30">
+        <div className="mb-2 md:mb-4 p-3 rounded-lg bg-gray-700/30 border border-gray-600/30">
           <div className="flex justify-between items-center">
             <div>
               <div className="text-sm text-gray-300">Round</div>
@@ -154,40 +164,42 @@ const PlayerList: React.FC<PlayerListProps> = ({ darkMode }) => {
       )}
 
       {/* Player List */}
-      <div className="flex-1 overflow-y-auto space-y-2 pr-2 custom-scrollbar">
+      <div className="flex-1 overflow-y-auto space-y-1 md:space-y-2 pr-1 md:pr-2 custom-scrollbar">
         {sortedPlayers.map((player) => (
           <div
             key={player.id}
-            className={`flex items-center justify-between p-4 rounded-lg transition-all ${
-              player.id === currentPlayerId ? 'ring-2 ring-indigo-500 ring-opacity-50' : ''
+            className={`flex items-center justify-between p-2 md:p-4 rounded-lg transition-all ${
+              player.name === currentPlayer?.name ? 'ring-2 ring-indigo-500 ring-opacity-50' : ''
             } ${
               player.isPartyLeader ? 'bg-indigo-500/20 border border-indigo-500/30' :
               player.isDrawing ? 'bg-green-500/20 border border-green-500/30' : 
-              player.hasGuessedCorrectly ? 'bg-blue-500/20 border border-blue-500/30' : 
+              player.hasGuessedCorrectly && isGameInProgress ? 'bg-blue-500/20 border border-blue-500/30' :
+              isGameEnded ? 'bg-gray-500/20 border border-gray-500/30' :
               'bg-gray-500/10 border border-gray-500/30'
             } relative group hover:transform hover:scale-[1.02] hover:shadow-lg transition-all duration-200`}
           >
             <div className="flex items-center space-x-3">
               <div className={`w-2 h-2 rounded-full ${
+                isGameEnded ? 'bg-purple-500' :
                 isGameInProgress 
                   ? (player.hasGuessedCorrectly ? 'bg-blue-500' : 'bg-gray-500') 
                   : (player.isReady ? 'bg-green-500' : 'bg-yellow-500')
               }`} />
               <div>
                 <div className="flex items-center space-x-2">
-                  <span className="font-medium">{player.name}</span>
+                  <span className="font-medium text-sm md:text-base">{player.name}</span>
                   {player.isPartyLeader && (
                     <span className="text-indigo-400 bg-indigo-500/20 px-2 py-0.5 rounded-full text-xs" title="Party Leader">👑 Leader</span>
                   )}
-                  {player.isDrawing && (
+                  {player.isDrawing && isGameInProgress && (
                     <span className="text-green-400 animate-bounce" title="Currently Drawing">✏️</span>
                   )}
-                  {player.id === currentPlayerId && (
+                  {player.name === currentPlayer?.name && (
                     <span className="text-xs bg-indigo-500/20 text-indigo-300 px-2 py-0.5 rounded-full">You</span>
                   )}
                 </div>
                 <div className="flex items-center space-x-2 text-sm text-gray-400">
-                  {!isGameInProgress && (
+                  {!isGameInProgress && !isGameEnded && (
                     <span>{player.isReady ? 'Ready' : 'Not Ready'}</span>
                   )}
                   {isGameInProgress && player.hasGuessedCorrectly && (
@@ -201,12 +213,12 @@ const PlayerList: React.FC<PlayerListProps> = ({ darkMode }) => {
             </div>
             <div className="flex items-center space-x-3">
               <div className="text-right">
-                <div className="font-bold text-lg">{player.score}</div>
+                <div className="font-bold text-base md:text-lg">{player.score}</div>
                 <div className="text-xs text-gray-400">points</div>
               </div>
               
               {/* Kick button - only show if I'm the party leader and this isn't me */}
-              {amIPartyLeader && player.id !== currentPlayerId && (
+              {amIPartyLeader && player.id !== currentPlayerId && !isGameInProgress && (
                 <button
                   onClick={() => handleKickPlayer(player.name)}
                   className="p-1.5 rounded-full hover:bg-red-500/20 text-red-400 transition-colors"

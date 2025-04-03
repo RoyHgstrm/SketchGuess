@@ -111,7 +111,7 @@ export default function Room() {
     <WebSocketErrorBoundary>
       <div className={`h-screen flex flex-col overflow-hidden ${darkMode ? 'bg-gray-900 text-white' : 'bg-gray-100 text-gray-900'}`}>
         {/* Room Code Display */}
-        <div className={`w-full py-2 px-4 ${darkMode ? 'bg-gray-800' : 'bg-gray-200'} flex items-center justify-between`}>
+        <div className={`w-full py-1 px-2 md:py-2 md:px-4 ${darkMode ? 'bg-gray-800' : 'bg-gray-200'} flex items-center justify-between flex-wrap gap-2`}>
           <div className="flex items-center space-x-4">
             <div className="flex items-center space-x-2">
               <span className="text-sm font-medium">Room Code:</span>
@@ -171,24 +171,25 @@ export default function Room() {
           </div>
         )}
         
-        {/* Main Game Container */}
+        {/* Main Game Container - Changed flex direction for mobile */}
         <div className="flex-1 flex flex-col md:flex-row overflow-hidden">
-          {/* Left Sidebar - Players */}
-          <div className="w-full md:w-1/4 p-4 flex flex-col h-full overflow-hidden">
-            <div className={`rounded-xl shadow-lg ${darkMode ? 'bg-gray-800' : 'bg-white'} flex-1 flex flex-col overflow-hidden h-full animate-fade-in p-4`}>
+          
+          {/* Player List (Order 1 on mobile) */}
+          <div className="w-full md:w-1/4 p-2 md:p-4 order-1 md:order-1 h-auto md:h-full overflow-hidden">
+            <div className={`rounded-xl shadow-lg ${darkMode ? 'bg-gray-800' : 'bg-white'} flex-1 flex flex-col h-full p-2 md:p-4 overflow-hidden`}>
               <PlayerList darkMode={darkMode} />
             </div>
           </div>
           
-          {/* Main Content - Drawing Area */}
-          <div className="flex-1 p-4">
-            <div className={`w-full h-full ${darkMode ? 'bg-gray-800' : 'bg-white'} rounded-xl shadow-lg p-4`}>
+          {/* Drawing Canvas (Order 3 on mobile) */}
+          <div className="flex-1 p-2 md:p-4 order-3 md:order-2 flex justify-center items-center overflow-hidden min-h-0">
+            <div className={`w-full h-full ${darkMode ? 'bg-gray-800' : 'bg-white'} rounded-xl shadow-lg p-1 md:p-4 flex justify-center items-center`}>
               <DrawingCanvas darkMode={darkMode} />
             </div>
           </div>
           
-          {/* Right sidebar - Chat */}
-          <div className="w-full md:w-64 p-4 flex flex-col h-full">
+          {/* Chat System (Order 2 on mobile) */}
+          <div className="w-full md:w-64 p-2 md:p-4 order-2 md:order-3 h-1/3 md:h-full flex flex-col overflow-hidden min-h-0">
             <div className={`rounded-xl shadow-lg ${darkMode ? 'bg-gray-800' : 'bg-white'} flex-1 flex flex-col h-full overflow-hidden`}>
               <ChatSystem darkMode={darkMode} />
             </div>

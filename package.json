@@ -29,7 +29,7 @@
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "ts-node": "^10.9.2",
-    "ws": "^8.14.2"
+    "ws": "^8.18.1"
   },
   "devDependencies": {
     "@chakra-ui/react": "^3.15.0",

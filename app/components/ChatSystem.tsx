@@ -99,7 +99,7 @@ const ChatSystem: React.FC<ChatSystemProps> = ({ darkMode }) => {
   return (
     <div className="h-full flex flex-col">
       {/* Chat header */}
-      <div className={`p-4 border-b ${darkMode ? 'border-gray-700' : 'border-gray-200'}`}>
+      <div className={`p-2 md:p-4 border-b ${darkMode ? 'border-gray-700' : 'border-gray-200'}`}>
         <h3 className="font-medium">Chat</h3>
         {amIDrawing && gameState?.status === 'playing' && (
           <div className="mt-1 text-sm text-amber-500">
@@ -117,7 +117,7 @@ const ChatSystem: React.FC<ChatSystemProps> = ({ darkMode }) => {
       <div className="relative flex-1 overflow-hidden">
         <div 
           ref={messagesContainerRef}
-          className="absolute inset-0 overflow-y-auto p-4 space-y-2 custom-scrollbar"
+          className="absolute inset-0 overflow-y-auto p-2 md:p-4 space-y-1 md:space-y-2 custom-scrollbar"
         >
           {messages.length === 0 ? (
             <div className="flex items-center justify-center h-full">
@@ -130,10 +130,10 @@ const ChatSystem: React.FC<ChatSystemProps> = ({ darkMode }) => {
               </div>
             </div>
           ) : (
-            messages.map((msg) => (
+            messages.map((msg, index) => (
               <div
-                key={msg.id}
-                className={`p-3 rounded-lg animate-fade-in ${
+                key={`${msg.id}_${index}`}
+                className={`p-2 md:p-3 rounded-lg animate-fade-in ${
                   msg.type === 'system' ? 'bg-gray-600/20 text-center' :
                   msg.type === 'correct' ? 'bg-green-500/20 border-l-4 border-green-500' :
                   msg.type === 'incorrect' ? 'bg-red-500/20' :
@@ -179,24 +179,28 @@ const ChatSystem: React.FC<ChatSystemProps> = ({ darkMode }) => {
       </div>
 
       {/* Input area */}
-      <form onSubmit={handleSubmit} className={`p-4 border-t ${darkMode ? 'border-gray-700' : 'border-gray-200'}`}>
+      <form onSubmit={handleSubmit} className={`p-2 md:p-4 border-t ${darkMode ? 'border-gray-700' : 'border-gray-200'}`}>
         <div className="relative">
           <input
             type="text"
             value={message}
             onChange={(e) => setMessage(e.target.value)}
-            placeholder={amIDrawing ? "You're drawing right now..." : "Type your guess..."}
-            disabled={amIDrawing}
-            className={`w-full px-4 py-3 rounded-lg transition-colors ${
-              darkMode 
-                ? 'bg-gray-700 text-white placeholder-gray-400' 
+            placeholder={
+              gameState?.status === 'waiting' ? "Type your message..." :
+              gameState?.status === 'playing' && amIDrawing ? "You're drawing right now..." :
+              gameState?.status === 'playing' && !amIDrawing ? "Type your guess..." : "Type your message..."
+            }
+            disabled={gameState?.status === 'playing' && amIDrawing}
+            className={`w-full px-3 md:px-4 py-2 md:py-3 rounded-lg transition-colors ${
+              darkMode
+                ? 'bg-gray-700 text-white placeholder-gray-400'
                 : 'bg-gray-100 text-gray-900 placeholder-gray-500'
             } focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed`}
           />
           <button
             type="submit"
-            disabled={!message.trim() || amIDrawing}
-            className="absolute right-2 top-1/2 transform -translate-y-1/2 p-2 rounded-full text-indigo-500 hover:bg-indigo-100 dark:hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed"
+            disabled={!message.trim() || (gameState?.status === 'playing' && amIDrawing)}
+            className="absolute right-1 md:right-2 top-1/2 transform -translate-y-1/2 p-2 rounded-full text-indigo-500 hover:bg-indigo-100 dark:hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
               <path d="M10.894 2.553a1 1 0 00-1.788 0l-7 14a1 1 0 001.169 1.409l5-1.429A1 1 0 009 15.571V11a1 1 0 112 0v4.571a1 1 0 00.725.962l5 1.428a1 1 0 001.17-1.408l-7-14z" />
