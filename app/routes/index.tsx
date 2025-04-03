@@ -30,12 +30,10 @@ export default function Index() {
   };
 
   const generateRandomRoomCode = () => {
-    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
-    let result = '';
-    for (let i = 0; i < 4; i++) {
-      result += chars.charAt(Math.floor(Math.random() * chars.length));
-    }
-    setRoomCode(result);
+    // Generate a random 4-digit number between 1000 and 9999
+    const roomCode = Math.floor(Math.random() * 9000) + 1000;
+    // Convert to string and ensure it's 4 digits
+    setRoomCode(roomCode.toString());
   };
 
   const validateInputs = () => {
@@ -210,10 +208,16 @@ export default function Index() {
                 <div className="flex">
                   <input
                     type="text"
+                    inputMode="numeric"
+                    pattern="[0-9]*"
                     id="roomCode"
                     value={roomCode}
-                    onChange={(e) => setRoomCode(e.target.value.toUpperCase())}
-                    placeholder="Enter room code"
+                    onChange={(e) => {
+                      // Only allow numbers and limit to 4 digits
+                      const value = e.target.value.replace(/\D/g, '').slice(0, 4);
+                      setRoomCode(value);
+                    }}
+                    placeholder="Enter 4-digit code"
                     className={`flex-1 px-4 py-3 rounded-l-lg border-y border-l ${
                       darkMode 
                         ? 'bg-gray-700 border-gray-600 text-white placeholder-gray-400' 

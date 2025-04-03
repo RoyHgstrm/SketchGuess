@@ -168,7 +168,10 @@ const rooms = new Map<string, Room>();
 
 // Utility functions
 function generateId(): string {
-  return Math.random().toString(36).substring(2, 9);
+  // Generate a random 4-digit number between 1000 and 9999
+  const roomCode = Math.floor(Math.random() * 9000) + 1000;
+  // Convert to string and ensure it's 4 digits
+  return roomCode.toString().padStart(4, '0');
 }
 
 function broadcastToRoom(room: Room, message: any) {
