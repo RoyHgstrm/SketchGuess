@@ -10,11 +10,10 @@ interface LeaderboardPlayer {
 interface GameLeaderboardProps {
   players: LeaderboardPlayer[];
   darkMode: boolean;
-  onNewGame: () => void;
   onClose: () => void;
 }
 
-const GameLeaderboard: React.FC<GameLeaderboardProps> = ({ players, darkMode, onNewGame, onClose }) => {
+const GameLeaderboard: React.FC<GameLeaderboardProps> = ({ players, darkMode, onClose }) => {
   // Sort players by score in descending order
   const sortedPlayers = [...players].sort((a, b) => b.score - a.score);
   

@@ -80,6 +80,9 @@ export default function Room() {
     startNewGame 
   } = useWebSocket();
 
+  // Add local state for leaderboard
+  const [showLeaderboard, setShowLeaderboard] = useState(false);
+
   const copyRoomCode = useCallback(() => {
     navigator.clipboard.writeText(params.roomId || "").then(() => {
       setCopiedState(true);
@@ -102,6 +105,21 @@ export default function Room() {
       navigate('/');
     }
   }, [navigate, params.roomId, connect]);
+
+  // Effect to control leaderboard visibility based on context
+  useEffect(() => {
+    if (leaderboard && gameState?.status === 'ended') {
+      setShowLeaderboard(true);
+    } else {
+      // Hide leaderboard if game is not ended or no leaderboard data
+      setShowLeaderboard(false);
+    }
+  }, [leaderboard, gameState?.status]);
+
+  // Define the handler to close the leaderboard (using local state)
+  const handleCloseLeaderboard = useCallback(() => {
+    setShowLeaderboard(false); // Set local state to hide
+  }, []); // No dependencies needed
 
   return (
     <WebSocketErrorBoundary>
@@ -186,12 +204,12 @@ export default function Room() {
         onDismiss={removeNotification} 
       />
 
-      {/* Game Leaderboard - Show when game ends and leaderboard is available */}
-      {leaderboard && gameState?.status === 'ended' && (
+      {/* Game Leaderboard - Show based on local state */}
+      {showLeaderboard && leaderboard && (
         <GameLeaderboard 
           players={leaderboard} 
           darkMode={darkMode}
-          onNewGame={startNewGame}
+          onClose={handleCloseLeaderboard} // Pass the handler that updates local state
         />
       )}
     </WebSocketErrorBoundary>

@@ -78,59 +78,6 @@ export const DEFAULT_SETTINGS = {
   useOnlyCustomWords: false
 };
 
-// Load leaderboard from file or create new one
-export function loadLeaderboard() { // Removed TS return type
-  try {
-    if (fs.existsSync(LEADERBOARD_FILE)) {
-      const data = fs.readFileSync(LEADERBOARD_FILE, 'utf8');
-      return JSON.parse(data);
-    }
-  } catch (error) {
-    console.error('Error loading leaderboard:', error);
-  }
-  
-  return [];
-}
-
-// Save leaderboard to file
-function saveLeaderboard(leaderboard) { // Removed TS param type
-  try {
-    const data = JSON.stringify(leaderboard, null, 2);
-    fs.writeFileSync(LEADERBOARD_FILE, data, 'utf8');
-  } catch (error) {
-    console.error('Error saving leaderboard:', error);
-  }
-}
-
-// Update player's entry in the global leaderboard
-function updateLeaderboard(playerName, score, wordsGuessed) { // Removed TS param types
-  const leaderboard = loadLeaderboard();
-  const existingEntry = leaderboard.find(entry => entry.playerName === playerName);
-  
-  if (existingEntry) {
-    existingEntry.score += score;
-    existingEntry.gamesPlayed += 1;
-    existingEntry.wordsGuessed += wordsGuessed;
-    existingEntry.date = new Date().toISOString();
-  } else {
-    leaderboard.push({
-      playerName,
-      score,
-      gamesPlayed: 1,
-      wordsGuessed,
-      date: new Date().toISOString()
-    });
-  }
-  
-  saveLeaderboard(leaderboard);
-}
-
-// Get top 10 players from leaderboard
-export function getTopPlayers(count = 10) { // Removed TS return type
-  const leaderboard = loadLeaderboard();
-  return leaderboard.sort((a, b) => b.score - a.score).slice(0, count);
-}
-
 // Map to store room data
 const rooms = new Map(); // Removed TS Map type
 
@@ -384,16 +331,49 @@ function assignNewPartyLeader(room) {
 // Start a new turn, cycling through players
 function startNewTurn(room) {
     if (!room || !room.players || room.players.length === 0) return false;
-    
+
     console.log(`[Room ${room.id}] --- Executing startNewTurn ---`);
-    
+
+    // Find non-disconnected players
+    const activePlayers = room.players.filter(p => !p.disconnected);
+    if (activePlayers.length < 2) {
+        console.log(`Not enough active players to start a new turn. Room ${room.id}`);
+        // If the game was playing, end it
+        if (room.status === 'playing') {
+            broadcastSystemMessage(room, "Not enough players to continue. Game ending.");
+            endGame(room);
+        }
+        return false;
+    }
+
+    // Calculate potential next round and turn index
+    let nextTurnIndex = (room.gameState.turnWithinRound ?? -1) + 1;
+    let nextRound = room.gameState.currentRound || 0;
+
+    if (nextTurnIndex >= activePlayers.length) {
+        nextRound++;
+        nextTurnIndex = 0;
+    }
+    if (nextRound === 0) nextRound = 1; // Handle initial start
+
+    console.log(`[Room ${room.id}] startNewTurn Check: Potential Next Round=${nextRound}, Max Rounds=${room.settings.maxRounds}`);
+
+    // Check if the calculated NEXT round exceeds the max rounds BEFORE starting the turn
+    if (nextRound > room.settings.maxRounds) {
+        console.log(`[Room ${room.id}] Max rounds reached. Ending game instead of starting new turn.`);
+        endGame(room);
+        return false; // Stop execution, game has ended
+    }
+
+    // --- If game doesn't end, continue starting the turn --- 
+
     // Force clear canvas for everyone at the start of a new turn
     console.log(`[Room ${room.id}] Broadcasting clear canvas command for new turn.`);
     broadcastToRoom(room, { type: "clear" });
-    
+
     // Clear any existing timeouts (redundant check, but safe)
     if (room.timer) {
-        clearTimeout(room.timer);
+        clearInterval(room.timer);
         room.timer = null;
     }
     if (room.timerInterval) {
@@ -405,120 +385,92 @@ function startNewTurn(room) {
     room.players.forEach(player => {
         if (!player.disconnected) {
             player.hasGuessedCorrectly = false;
-            player.correctGuess = false;
+            player.correctGuess = false; // Ensure both flags are reset
             player.guessTime = null;
         }
     });
 
-    // Find non-disconnected players
-    const activePlayers = room.players.filter(p => !p.disconnected);
-    
-    if (activePlayers.length < 2) {
-        console.log(`Not enough active players to start a new turn. Room ${room.id}`);
-        return false;
-    }
-
-    let currentRound = room.gameState.currentRound || 0;
-    let turnWithinRound = (room.gameState.turnWithinRound ?? -1) + 1; // Increment turn index
-    
-    // Check if we need to advance the round
-    if (turnWithinRound >= activePlayers.length) {
-        currentRound++;
-        turnWithinRound = 0; // Reset turn index for new round
-        console.log(`[Room ${room.id}] Starting Round ${currentRound}`);
-    } 
-    // Ensure first round is 1 if starting from 0
-    if (currentRound === 0) {
-        currentRound = 1;
-    }
-
-    const nextDrawerIndex = turnWithinRound % activePlayers.length; // Index based on new turn number
-    const nextDrawer = activePlayers[nextDrawerIndex];
-    
-    // Get the word first so we can properly log it
+    // Determine the actual next drawer using the calculated index
+    const nextDrawer = activePlayers[nextTurnIndex];
     const newWord = getWordForRound(room);
-    
+
     // Update room state with the new drawer and word
     room.currentDrawer = nextDrawer;
     room.currentWord = newWord;
-    
-    console.log(`New turn started. Round: ${currentRound}, Turn Index In Round: ${turnWithinRound}, Drawer: ${nextDrawer.name}, Word: ${room.currentWord}`);
-    
-    // Update game state
+
+    console.log(`New turn started. Round: ${nextRound}, Turn Index In Round: ${nextTurnIndex}, Drawer: ${nextDrawer.name}, Word: ${room.currentWord}`);
+
+    // Update game state using the calculated next round and turn index
     room.gameState.status = 'playing';
-    room.gameState.currentRound = currentRound;
-    room.gameState.turnWithinRound = turnWithinRound;
+    room.gameState.currentRound = nextRound;
+    room.gameState.turnWithinRound = nextTurnIndex;
     room.gameState.timeLeft = room.settings.timePerRound;
-    room.gameState.word = newWord;
-    room.gameState.drawer = { id: nextDrawer.id, name: nextDrawer.name };
-    
+    room.gameState.word = newWord; // Store the chosen word
+    room.gameState.drawer = { id: nextDrawer.id, name: nextDrawer.name }; // Update drawer info
+    // Ensure totalTurns is updated if it wasn't set initially
+    if (!room.gameState.totalTurns || room.gameState.totalTurns === 0) {
+        room.gameState.totalTurns = room.settings.maxRounds * activePlayers.length;
+    }
+
     // Broadcast updated player list and game state
     broadcastPlayerList(room);
     broadcastGameState(room);
-    
+
     // Start the timer for this round
     startTimer(room);
-    
+
     return true;
 }
 
-// Update endRound function
+// Update endRound function to remove the end game check
 function endRound(room) {
-  if (!room || room.status !== 'playing') return;
-  
-  console.log(`[Room ${room.id}] --- Executing endRound ---`);
-  
-  // Clear timers
-  if (room.timer) {
-    console.log(`[Room ${room.id}] Clearing timer in endRound.`);
-    clearInterval(room.timer);
-    room.timer = null;
-  }
-  if (room.timerInterval) {
-      console.log(`[Room ${room.id}] Clearing interval timer in endRound.`);
-      clearInterval(room.timerInterval);
-      room.timerInterval = null;
-  }
+    if (!room || room.status !== 'playing') return;
 
-  // room.isRoundActive = false; // REMOVED - Let room.status handle state
-  console.log(`[Room ${room.id}] Ending Round ${room.gameState.currentRound}, Turn ${room.gameState.turnWithinRound || 0}`);
+    console.log(`[Room ${room.id}] --- Executing endRound ---`);
 
-  // Reveal word to all players
-  // Broadcast round end details (like the word)
-  broadcastSystemMessage(room, `Round ${room.gameState.currentRound} finished! The word was: ${room.gameState.word}`);
+    // Clear timers
+    if (room.timer) {
+        console.log(`[Room ${room.id}] Clearing timer in endRound.`);
+        clearInterval(room.timer);
+        room.timer = null;
+    }
+    if (room.timerInterval) {
+        console.log(`[Room ${room.id}] Clearing interval timer in endRound.`);
+        clearInterval(room.timerInterval);
+        room.timerInterval = null;
+    }
 
-  // ... (Award points logic remains the same) ...
-    const correctGuessers = room.players.filter(p => !p.disconnected && p.hasGuessedCorrectly);
+    console.log(`[Room ${room.id}] Ending Round ${room.gameState.currentRound}, Turn ${room.gameState.turnWithinRound || 0}`);
+
+    // Reveal word to all players
+    broadcastSystemMessage(room, `Round ${room.gameState.currentRound} finished! The word was: ${room.currentWord}`); // Use currentWord
+
+    // Award points logic
+    const correctGuessers = room.players.filter(p => !p.disconnected && (p.hasGuessedCorrectly || p.correctGuess));
     if (room.currentDrawer && !room.currentDrawer.disconnected) {
-      room.currentDrawer.score += 100;
+        // Award points to drawer based on number of correct guessers
+        const drawerBonus = correctGuessers.length * 25; // Example: 25 points per correct guess
+        room.currentDrawer.score = (room.currentDrawer.score || 0) + drawerBonus;
+        console.log(`[Room ${room.id}] Awarded ${drawerBonus} points to drawer ${room.currentDrawer.name}`);
     }
     correctGuessers.forEach(p => {
-        const timeBonus = Math.max(0, 60 - (p.guessTime || 60)); 
-        p.score += 50 + timeBonus; 
+        // Score calculation remains the same for guessers
+        const baseScore = 100;
+        const turnDuration = room.settings.timePerRound;
+        const guessTimestamp = p.guessTime || Date.now(); // Use guessTime if available
+        // Calculate time taken based on when round started (needs improvement if round start time isn't stored)
+        const timeBonus = Math.max(0, 50); // Simplified bonus for now
+        p.score = (p.score || 0) + baseScore + timeBonus; 
     });
-    broadcastPlayerList(room);
-    broadcastSystemMessage(room, `Round ended! Correct word was: ${room.currentWord}`);
+    broadcastPlayerList(room); // Update scores
 
-  // Check if game should end
-  const activePlayerCount = room.players.filter(p => !p.disconnected).length;
-  // Calculate the turn number that just finished
-  const lastTurnNumber = ((room.gameState.currentRound || 0) * activePlayerCount) + (room.gameState.turnWithinRound || 0) + 1;
-  const totalTurnsRequired = room.gameState.totalTurns || (room.settings.maxRounds * activePlayerCount); // Use stored or recalculate
-  
-  console.log(`[Room ${room.id}] EndRound Check: Last Turn Completed=${lastTurnNumber}, Total Turns Required=${totalTurnsRequired}`);
-  
-  if (lastTurnNumber >= totalTurnsRequired && totalTurnsRequired > 0) {
-    console.log(`[Room ${room.id}] Game should end after this turn. Calling endGame...`);
-    broadcastSystemMessage(room, `All rounds completed! (${room.gameState.currentRound}/${room.gameState.maxRounds})`);
-    endGame(room); 
-  } else {
-    // Call startNewTurn directly
-    if(room.status === 'playing') {
-        startNewTurn(room);
-    } else {
-        console.log(`[Room ${room.id}] Room status changed to ${room.status} before startNewTurn could be called.`);
-    }
-  }
+    // Game end check is now in startNewTurn, so just schedule the next turn here
+    console.log(`[Room ${room.id}] Scheduling next turn.`);
+    setTimeout(() => {
+        if (room.status === 'playing') { // Check status again before starting
+            startNewTurn(room);
+        }
+    }, 3000); // 3-second delay before starting next turn
 }
 
 // Also add log to endGame start
@@ -526,57 +478,57 @@ function endGame(room) {
     console.log(`[Room ${room.id}] --- Executing endGame ---`);
     
     if (room.timer) { clearInterval(room.timer); room.timer = null; }
-    if (room.timerInterval) { clearInterval(room.timerInterval); room.timerInterval = null; } // Clear interval too
+    if (room.timerInterval) { clearInterval(room.timerInterval); room.timerInterval = null; }
 
     broadcastSystemMessage(room, "Game Over! Final scores are being calculated.");
 
     // Update game status immediately
     room.status = 'ended';
-    room.gameState.status = 'ended';
-    
-    // Ensure gameState exists before modifying
     room.gameState = room.gameState || {}; 
     room.gameState.status = 'ended';
-    room.gameState.currentRound = 0; 
-    room.gameState.turnWithinRound = 0; // Use consistent naming
     room.gameState.drawer = null;
     room.gameState.word = null;
     room.gameState.timeLeft = 0;
-    room.isRoundActive = false;
 
     console.log(`Ending game in room ${room.id}`);
     
-    // Sort players by score for the leaderboard
-    const sortedPlayers = [...room.players]
-        .filter(p => !p.disconnected)
-        .sort((a, b) => (b.score || 0) - (a.score || 0))
-        .map(p => ({ // Map to the structure expected by the client component
-            id: p.id,
-            name: p.name,
-            score: p.score || 0,
-            isPartyLeader: p.isPartyLeader || false
-        }));
+    // Prepare data for leaderboard update and broadcast
+    const leaderboardPlayers = [];
+    room.players.forEach(player => {
+        if (!player.disconnected) {
+            // Update the global leaderboard JSON file - PASS IP ADDRESS
+            // Assuming wordsGuessed needs proper tracking; using 0 for now.
+            updateLeaderboard(player.name, player.score || 0, 0, player.ipAddress || 'unknown');
+            
+            leaderboardPlayers.push({ 
+                id: player.id,
+                name: player.name,
+                score: player.score || 0,
+                isPartyLeader: player.isPartyLeader || false
+            });
+        }
+    });
+
+    // Sort players by score for the broadcast message
+    leaderboardPlayers.sort((a, b) => b.score - a.score);
   
-    // Send final scores using the correct message type
     console.log(`[Room ${room.id}] Broadcasting gameLeaderboard.`);
     broadcastToRoom(room, {
-      type: 'gameLeaderboard', // Correct type
-      players: sortedPlayers
+      type: 'gameLeaderboard', 
+      players: leaderboardPlayers // Send the sorted list
     });
 
     // Reset player states for the next potential game (isReady)
     room.players.forEach(p => {
       p.isReady = false;
-      // Keep score until next game starts, reset drawing/guess status if needed
       p.hasGuessedCorrectly = false;
+      p.correctGuess = false;
+      // Keep score until next game starts
     });
 
     // Update clients with the final ended game state and player list (with isReady=false)
-    broadcastGameState(room); // Sends gameState with status: 'ended'
-    broadcastPlayerList(room); // Sends player list with isReady: false
-    
-    // Update global leaderboard (if implemented)
-    // sortedPlayers.forEach(p => updateLeaderboard(p.name, p.score, 0)); // Assuming wordsGuessed is tracked elsewhere
+    broadcastGameState(room); 
+    broadcastPlayerList(room); 
 }
 
 function tryStartGame(room) {
@@ -655,6 +607,7 @@ export function handleJoin(ws, message, rooms, totalConnections) {
     const { roomId: targetRoomId, playerName } = message;
     let roomId = targetRoomId;
     let room;
+    const ipAddress = ws._socket?.remoteAddress || 'unknown'; // Get IP address
 
     // Validate player name
     if (!playerName || typeof playerName !== 'string' || playerName.trim().length === 0 || playerName.length > 15) {
@@ -698,11 +651,14 @@ export function handleJoin(ws, message, rooms, totalConnections) {
         name: cleanedPlayerName,
         score: 0,
         isReady: false,
+        isDrawing: false,
         hasGuessedCorrectly: false,
         isPartyLeader: false, // Initially set to false
         ws: ws,
         lastActive: Date.now(),
-        disconnected: false
+        ipAddress: ipAddress, // Store the IP
+        guessTime: null,
+        correctGuess: false
     };
 
     // Add player to room BEFORE assigning leader
@@ -724,7 +680,7 @@ export function handleJoin(ws, message, rooms, totalConnections) {
     ws.playerId = newPlayer.id;
     ws.playerName = newPlayer.name;
 
-    console.log(`[Room ${roomId}] ${newPlayer.name} (ID: ${newPlayer.id}) joined. Leader: ${newPlayer.isPartyLeader}. Total players: ${room.players.filter(p => !p.disconnected).length}`);
+    console.log(`[Room ${roomId}] ${newPlayer.name} (ID: ${newPlayer.id}) joined. IP: ${ipAddress}. Leader: ${newPlayer.isPartyLeader}. Total players: ${room.players.filter(p => !p.disconnected).length}`);
 
     // Send confirmation and initial state to the new player
     safeSend(ws, {
@@ -1136,4 +1092,59 @@ function broadcastGameState(room) {
             sendGameState(room, player);
         }
     });
+}
+
+// Load leaderboard from file or create new one
+export function loadLeaderboard() { 
+  try {
+    if (fs.existsSync(LEADERBOARD_FILE)) {
+      const data = fs.readFileSync(LEADERBOARD_FILE, 'utf8');
+      return JSON.parse(data);
+    }
+  } catch (error) {
+    console.error('Error loading leaderboard:', error);
+  }
+  
+  return [];
+}
+
+// Save leaderboard to file
+function saveLeaderboard(leaderboard) { 
+  try {
+    const data = JSON.stringify(leaderboard, null, 2);
+    fs.writeFileSync(LEADERBOARD_FILE, data, 'utf8');
+  } catch (error) {
+    console.error('Error saving leaderboard:', error);
+  }
+}
+
+// Update player's entry in the global leaderboard - Keep ipAddress PARAMETER
+function updateLeaderboard(playerName, score, wordsGuessed, ipAddress) { 
+  const leaderboard = loadLeaderboard();
+  const existingEntry = leaderboard.find(entry => entry.playerName === playerName);
+  
+  if (existingEntry) {
+    existingEntry.score += score; // Add score from the game
+    existingEntry.gamesPlayed += 1;
+    existingEntry.wordsGuessed += wordsGuessed;
+    existingEntry.date = new Date().toISOString();
+    existingEntry.ipAddress = ipAddress; // Update with the latest IP
+  } else {
+    leaderboard.push({
+      playerName,
+      score,
+      gamesPlayed: 1,
+      wordsGuessed,
+      date: new Date().toISOString(),
+      ipAddress: ipAddress // Store IP for new entry
+    });
+  }
+  
+  saveLeaderboard(leaderboard);
+}
+
+// Get top 10 players from leaderboard
+export function getTopPlayers(count = 10) {
+  const leaderboard = loadLeaderboard();
+  return leaderboard.sort((a, b) => (b.score || 0) - (a.score || 0)).slice(0, count);
 }
