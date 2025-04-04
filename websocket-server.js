@@ -11,6 +11,11 @@ const __dirname = path.dirname(__filename);
 // Path for storing the leaderboard
 export const LEADERBOARD_FILE = path.join(__dirname, 'leaderboard.json');
 
+// Define Constants
+const HEARTBEAT_INTERVAL = 30000; // 30 seconds
+const MAX_USERNAME_LENGTH = 20;
+const MAX_CHAT_LENGTH = 150;
+
 // Default word list
 export const DEFAULT_WORDS = [
   "Pac-Man", "bow", "Apple", "chest", "six pack", "nail", "tornado", "Mickey Mouse", "Youtube", "lightning",
@@ -91,7 +96,7 @@ function safeSend(ws, messageData) {
   if (ws && ws.readyState === WebSocket.OPEN) {
     try {
       ws.send(JSON.stringify(messageData));
-    } catch (error) {
+  } catch (error) {
       console.error(`Error sending message: ${error}. Data:`, messageData);
     }
   } else {
@@ -112,7 +117,7 @@ function broadcastToRoom(room, message, senderWs = null) { // Removed TS types
         if (player && player.ws && player.ws !== senderWs && player.ws.readyState === WebSocket.OPEN) {
             try {
                 player.ws.send(messageString);
-            } catch (error) {
+  } catch (error) {
                 console.error(`Failed to send message to player ${player.id}:`, error);
             }
         }
@@ -158,7 +163,7 @@ function sendGameState(room, player) {
         // Include direct identification info in EVERY game state message
         playerInfo: {
             id: player.id,
-            name: player.name,
+        name: player.name,
             isDrawer: room.currentDrawer ? player.id === room.currentDrawer.id : false,
             isPartyLeader: player.isPartyLeader || false
         }
@@ -343,9 +348,9 @@ function startNewTurn(room) {
             broadcastSystemMessage(room, "Not enough players to continue. Game ending.");
             endGame(room);
         }
-        return false;
+      return false;
     }
-
+    
     // Calculate potential next round and turn index
     let nextTurnIndex = (room.gameState.turnWithinRound ?? -1) + 1;
     let nextRound = room.gameState.currentRound || 0;
@@ -469,7 +474,7 @@ function endRound(room) {
     setTimeout(() => {
         if (room.status === 'playing') { // Check status again before starting
             startNewTurn(room);
-        }
+  }
     }, 3000); // 3-second delay before starting next turn
 }
 
@@ -485,16 +490,16 @@ function endGame(room) {
     // Update game status immediately
     room.status = 'ended';
     room.gameState = room.gameState || {}; 
-    room.gameState.status = 'ended';
+  room.gameState.status = 'ended';
     room.gameState.drawer = null;
-    room.gameState.word = null;
-    room.gameState.timeLeft = 0;
-
+  room.gameState.word = null;
+  room.gameState.timeLeft = 0;
+  
     console.log(`Ending game in room ${room.id}`);
     
     // Prepare data for leaderboard update and broadcast
     const leaderboardPlayers = [];
-    room.players.forEach(player => {
+  room.players.forEach(player => {
         if (!player.disconnected) {
             // Update the global leaderboard JSON file - PASS IP ADDRESS
             // Assuming wordsGuessed needs proper tracking; using 0 for now.
@@ -513,7 +518,7 @@ function endGame(room) {
     leaderboardPlayers.sort((a, b) => b.score - a.score);
   
     console.log(`[Room ${room.id}] Broadcasting gameLeaderboard.`);
-    broadcastToRoom(room, {
+  broadcastToRoom(room, {
       type: 'gameLeaderboard', 
       players: leaderboardPlayers // Send the sorted list
     });
@@ -527,8 +532,8 @@ function endGame(room) {
     });
 
     // Update clients with the final ended game state and player list (with isReady=false)
-    broadcastGameState(room); 
-    broadcastPlayerList(room); 
+  broadcastGameState(room);
+  broadcastPlayerList(room);
 }
 
 function tryStartGame(room) {
@@ -577,16 +582,16 @@ function createNewRoom(roomId) {
     console.log(`Creating new room structure for ${roomId}`);
     return {
         id: roomId,
-        players: [],
+      players: [],
         settings: { ...DEFAULT_SETTINGS }, // Deep copy default settings
         status: 'waiting',
         gameState: { // Initialize gameState properly
-            status: 'waiting',
-            currentRound: 0,
+        status: 'waiting',
+        currentRound: 0,
             turnWithinRound: -1, // Initialize turn index
-            maxRounds: DEFAULT_SETTINGS.maxRounds,
+        maxRounds: DEFAULT_SETTINGS.maxRounds,
             totalTurns: 0,
-            timeLeft: 0,
+        timeLeft: 0,
             drawer: null,
             word: null
         },
@@ -604,100 +609,99 @@ function createNewRoom(roomId) {
 
 // --- Refactored Message Handlers (Exported) ---
 export function handleJoin(ws, message, rooms, totalConnections) {
-    const { roomId: targetRoomId, playerName } = message;
-    let roomId = targetRoomId;
-    let room;
-    const ipAddress = ws._socket?.remoteAddress || 'unknown'; // Get IP address
+  const { roomId, playerName, playerId } = message; // Use destructured roomId
+  let player = null; 
+  const ipAddress = ws._socket?.remoteAddress || 'unknown'; // Get IP address
 
-    // Validate player name
-    if (!playerName || typeof playerName !== 'string' || playerName.trim().length === 0 || playerName.length > 15) {
-        safeSend(ws, { type: "error", content: "Invalid player name." });
-        ws.close(1008, "Invalid player name");
-        return;
-    }
-    const cleanedPlayerName = playerName.trim();
+  // --- Player Name Validation ---
+  if (!playerName || typeof playerName !== 'string' || playerName.trim().length === 0) {
+    safeSend(ws, { type: "error", content: "Invalid player name provided." });
+    ws.close(1008, "Invalid player name");
+    return;
+  }
+  const trimmedPlayerName = playerName.trim();
+  if (trimmedPlayerName.length > MAX_USERNAME_LENGTH) {
+      safeSend(ws, { type: "error", content: `Player name exceeds maximum length of ${MAX_USERNAME_LENGTH} characters.` });
+      ws.close(1008, "Player name too long");
+      return;
+  }
+  const finalPlayerName = trimmedPlayerName; // Use the validated name
 
-    // Find or create room
-    if (!roomId) {
-        roomId = generateRoomId();
-        console.log(`No room ID provided, generated new room ID: ${roomId}`);
-    }
+  // Find or create room using the destructured roomId
+  let room = rooms.get(roomId);
+  if (!room) {
+      console.log(`Creating new room ${roomId}`);
+      room = createNewRoom(roomId); 
+      rooms.set(roomId, room);
+  } else {
+      // Check name conflict in existing room
+      const existingPlayer = room.players.find(p => p.name === finalPlayerName && !p.disconnected);
+      if (existingPlayer) {
+          safeSend(ws, { type: "error", content: `Player name "${finalPlayerName}" is already taken in this room.` });
+          ws.close(1008, "Player name taken");
+          return;
+      }
+      // Check if room is full (Example: limit to 10 players)
+      if (room.players.filter(p => !p.disconnected).length >= 10) {
+          safeSend(ws, { type: "error", content: "Room is full." });
+          ws.close(1008, "Room full");
+          return;
+      }
+  }
 
-    if (rooms.has(roomId)) {
-        room = rooms.get(roomId);
-    } else {
-        console.log(`Creating new room ${roomId}`);
-        room = createNewRoom(roomId);
-        rooms.set(roomId, room);
-    }
+  // Create the player object using finalPlayerName
+  player = {
+      id: playerId || generateUniquePlayerId(),
+      name: finalPlayerName, 
+      score: 0,
+      isReady: false,
+      isDrawing: false,
+      hasGuessedCorrectly: false,
+      isPartyLeader: room.players.filter(p => !p.disconnected).length === 0, // Assign leader if room is effectively empty
+      ws: ws,
+      lastActive: Date.now(),
+      ipAddress: ipAddress, // Store the IP
+      guessTime: null,
+      correctGuess: false
+  };
 
-    // Check if room is full (Example: limit to 10 players)
-    if (room.players.filter(p => !p.disconnected).length >= 10) {
-        safeSend(ws, { type: "error", content: "Room is full." });
-        ws.close(1008, "Room full");
-        return;
-    }
+  // Add player to room
+  room.players.push(player);
 
-    // Check for existing player name
-    if (room.players.some(p => !p.disconnected && p.name === cleanedPlayerName)) {
-         safeSend(ws, { type: "error", content: "Player name already taken in this room." });
-         ws.close(1008, "Name taken");
-         return;
-    }
+  // Link WebSocket to player and room
+  ws.roomId = roomId; 
+  ws.playerId = player.id;
+  ws.playerName = player.name;
 
-    // Create the new player object
-    const newPlayer = {
-        id: generateUniquePlayerId(),
-        name: cleanedPlayerName,
-        score: 0,
-        isReady: false,
-        isDrawing: false,
-        hasGuessedCorrectly: false,
-        isPartyLeader: false, // Initially set to false
-        ws: ws,
-        lastActive: Date.now(),
-        ipAddress: ipAddress, // Store the IP
-        guessTime: null,
-        correctGuess: false
-    };
+  // Assign leader status reliably
+  if (player.isPartyLeader) {
+      // It's possible another leader exists if players join/leave quickly,
+      // so ensure only one active leader.
+      assignNewPartyLeader(room); 
+      console.log(`[Room ${roomId}] Assigned ${player.name} (ID: ${player.id}) as Party Leader.`);
+  } else {
+      // Ensure the player joining isn't marked as leader if one already exists
+      player.isPartyLeader = false;
+  }
 
-    // Add player to room BEFORE assigning leader
-    room.players.push(newPlayer);
+  console.log(`[Room ${roomId}] ${player.name} (ID: ${player.id}) joined. IP: ${ipAddress}. Leader: ${player.isPartyLeader}. Total players: ${room.players.filter(p => !p.disconnected).length}`);
 
-    // Assign leader status reliably
-    // Check if there are any *other* active leaders
-    const otherActiveLeaders = room.players.filter(p => p.id !== newPlayer.id && !p.disconnected && p.isPartyLeader);
-    if (otherActiveLeaders.length === 0) {
-        // If no other active leader, this new player becomes the leader
-        newPlayer.isPartyLeader = true;
-        console.log(`[Room ${roomId}] Assigned ${newPlayer.name} (ID: ${newPlayer.id}) as Party Leader (no other active leaders).`);
-    } else {
-        console.log(`[Room ${roomId}] ${newPlayer.name} (ID: ${newPlayer.id}) joined. Leader is already ${otherActiveLeaders[0].name}.`);
-    }
-    
-    // Link WebSocket to player and room
-    ws.roomId = roomId;
-    ws.playerId = newPlayer.id;
-    ws.playerName = newPlayer.name;
+  // Send confirmation and initial state to the new player
+  safeSend(ws, {
+      type: 'joined',
+      roomId: roomId, 
+      playerDetails: { 
+          id: player.id, 
+          name: player.name, 
+          isPartyLeader: player.isPartyLeader 
+      },
+      settings: room.settings // Send current room settings on join
+  });
+  sendGameState(room, player); // Send initial game state
 
-    console.log(`[Room ${roomId}] ${newPlayer.name} (ID: ${newPlayer.id}) joined. IP: ${ipAddress}. Leader: ${newPlayer.isPartyLeader}. Total players: ${room.players.filter(p => !p.disconnected).length}`);
-
-    // Send confirmation and initial state to the new player
-    safeSend(ws, {
-        type: "joined",
-        roomId,
-        playerDetails: { 
-            id: newPlayer.id, 
-            name: newPlayer.name, 
-            isPartyLeader: newPlayer.isPartyLeader 
-        },
-        settings: room.settings
-    });
-    sendGameState(room, newPlayer); // Send initial game state
-
-    // Broadcast updated player list to everyone
-    broadcastPlayerList(room);
-    broadcastSystemMessage(room, `${newPlayer.name} has joined the room.`);
+  // Broadcast updated player list and system message to everyone
+  broadcastPlayerList(room);
+  broadcastSystemMessage(room, `${player.name} has joined the room.`);
 }
 
 export function handlePlayerLeave(ws, rooms) {
@@ -706,10 +710,10 @@ export function handlePlayerLeave(ws, rooms) {
     
     if (!roomId || !playerId || !rooms.has(roomId)) {
         console.log(`Attempted to handle leave for unknown player/room. PlayerID: ${playerId}, RoomID: ${roomId}`);
-        return;
-    }
-
-    const room = rooms.get(roomId);
+    return;
+  }
+  
+  const room = rooms.get(roomId);
     const leavingPlayerIndex = room.players.findIndex(p => p.id === playerId);
 
     if (leavingPlayerIndex === -1) {
@@ -842,8 +846,16 @@ export function handleGuess(ws, data, rooms) {
   const player = room.players.find(p => p.id === playerId && !p.disconnected);
   if (!player || player.isDrawing) return;
   
-  const guess = data.guess?.trim().toLowerCase();
-  if (!guess || guess.length < 1) return;
+  const guess = (data.guess || '').trim();
+
+  // --- Guess Length Validation ---
+  if (guess.length > MAX_CHAT_LENGTH) {
+    safeSend(ws, { type: "error", content: `Guess exceeds maximum length of ${MAX_CHAT_LENGTH} characters.` });
+    return; // Do not process or broadcast
+  }
+  if (guess.length === 0) {
+      return; // Ignore empty guesses
+  }
   
   console.log(`Player ${player.name} guessed: ${guess}`);
   
@@ -922,7 +934,15 @@ export function handleChat(ws, data, rooms) {
     if (!room || !player) return;
 
     const messageContent = (data.content || '').trim();
-    if (!messageContent) return; // Ignore empty messages
+
+    // --- Chat Length Validation ---
+    if (messageContent.length > MAX_CHAT_LENGTH) {
+        safeSend(ws, { type: "error", content: `Chat message exceeds maximum length of ${MAX_CHAT_LENGTH} characters.` });
+        return; // Do not process or broadcast
+    }
+    if (messageContent.length === 0) {
+        return; // Ignore empty messages
+    }
 
     // Prevent drawer from chatting during the game (optional, depends on game rules)
     // if (room.status === 'playing' && player.isDrawing) {
@@ -944,11 +964,55 @@ export function handleChat(ws, data, rooms) {
 }
 
 export function handleStartNewGameRequest(ws, data, rooms) {
-    const room = ws.roomId ? rooms.get(ws.roomId) : null;
-    const player = room && ws.playerId ? room.players.find(p => p.id === ws.playerId && !p.disconnected) : null;
-    if (!room || !player) return;
-    // ... rest of handleStartNewGameRequest logic ...
-    // Check leader, check player count, reset states, call tryStartGame
+    if (!ws.roomId || !rooms.has(ws.roomId)) return;
+    const room = rooms.get(ws.roomId);
+    const player = room.players.find(p => p.id === ws.playerId);
+
+    if (!player || !player.isPartyLeader) {
+        safeSend(ws, { type: "error", content: "Only the party leader can start a new game." });
+        return;
+    }
+
+    console.log(`[Room ${room.id}] Received start new game request from leader ${player.name}.`);
+
+    // --- Reset Room State for New Game ---
+    room.status = 'waiting';
+    room.gameState = { // Reset gameState completely
+        status: 'waiting',
+        currentRound: 0,
+        turnWithinRound: -1,
+        maxRounds: room.settings.maxRounds, // Keep current settings
+        totalTurns: 0,
+        timeLeft: 0,
+        drawer: null,
+        word: null
+    };
+    room.currentWord = null;
+    room.currentDrawer = null;
+    if (room.timer) { clearInterval(room.timer); room.timer = null; }
+    if (room.timerInterval) { clearInterval(room.timerInterval); room.timerInterval = null; }
+
+    // Reset player scores and ready status
+    room.players.forEach(p => {
+        if (!p.disconnected) {
+            p.score = 0;
+            p.isReady = false;
+            p.hasGuessedCorrectly = false;
+            p.correctGuess = false;
+            p.guessTime = null;
+        }
+    });
+
+    console.log(`[Room ${room.id}] Room state reset to waiting.`);
+
+    // Broadcast the reset state
+    broadcastGameState(room);
+    broadcastPlayerList(room);
+
+    // Now, attempt to start the game if conditions are met (players might already be ready)
+    // We don't call tryStartGame directly here, as the ready-up flow will handle it.
+    // Broadcasting the reset state is enough.
+    // tryStartGame(room);
 }
 
 // Update handleKickPlayer to allow kicking mid-game
@@ -960,13 +1024,13 @@ export function handleKickPlayer(ws, data, rooms) {
     if (!room || !player || !player.isPartyLeader) { 
         console.log(`[Room ${ws.roomId}] Kick rejected (player: ${player?.name}, leader: ${player?.isPartyLeader})`);
         if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'error', content: 'Only the party leader can kick players.'}));
-        return;
-    }
-
+    return;
+  }
+  
     const playerNameToKick = data.playerToKick;
     if (!playerNameToKick || playerNameToKick === player.name) { // Prevent self-kick
         if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'error', content: 'Invalid player name to kick.'}));
-      return;
+    return;
   }
   
     const playerToKickIndex = room.players.findIndex(p => p.name === playerNameToKick && !p.disconnected);
@@ -1090,8 +1154,8 @@ function broadcastGameState(room) {
     room.players.forEach(player => {
         if (player && !player.disconnected && player.ws && player.ws.readyState === WebSocket.OPEN) {
             sendGameState(room, player);
-        }
-    });
+    }
+  });
 }
 
 // Load leaderboard from file or create new one
@@ -1100,8 +1164,8 @@ export function loadLeaderboard() {
     if (fs.existsSync(LEADERBOARD_FILE)) {
       const data = fs.readFileSync(LEADERBOARD_FILE, 'utf8');
       return JSON.parse(data);
-    }
-  } catch (error) {
+        }
+      } catch (error) {
     console.error('Error loading leaderboard:', error);
   }
   

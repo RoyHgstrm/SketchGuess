@@ -77,7 +77,8 @@ export default function Room() {
     gameState, 
     players, 
     leaderboard,
-    startNewGame 
+    startNewGame,
+    currentPlayer
   } = useWebSocket();
 
   // Add local state for leaderboard
@@ -116,10 +117,16 @@ export default function Room() {
     }
   }, [leaderboard, gameState?.status]);
 
-  // Define the handler to close the leaderboard (using local state)
+  // Define the handler to close the leaderboard and potentially start new game
   const handleCloseLeaderboard = useCallback(() => {
-    setShowLeaderboard(false); // Set local state to hide
-  }, []); // No dependencies needed
+    setShowLeaderboard(false); // Always close the leaderboard UI
+
+    // If the current player is the leader, also trigger the start new game request
+    if (currentPlayer?.isPartyLeader) {
+      console.log("Leader clicked Continue on leaderboard, triggering startNewGame");
+      startNewGame(); // Call the context function to send the request
+    }
+  }, [currentPlayer, startNewGame]); // Add dependencies
 
   return (
     <WebSocketErrorBoundary>
@@ -209,7 +216,7 @@ export default function Room() {
         <GameLeaderboard 
           players={leaderboard} 
           darkMode={darkMode}
-          onClose={handleCloseLeaderboard} // Pass the handler that updates local state
+          onClose={handleCloseLeaderboard} // Use the updated handler
         />
       )}
     </WebSocketErrorBoundary>

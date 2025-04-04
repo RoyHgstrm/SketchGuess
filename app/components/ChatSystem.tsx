@@ -5,6 +5,8 @@ interface ChatSystemProps {
   darkMode: boolean;
 }
 
+const MAX_CHAT_LENGTH = 150; // Define max length constant
+
 const ChatSystem: React.FC<ChatSystemProps> = ({ darkMode }) => {
   const { messages, sendMessage, currentPlayer, gameState } = useWebSocket();
   const [message, setMessage] = useState("");
@@ -73,14 +75,12 @@ const ChatSystem: React.FC<ChatSystemProps> = ({ darkMode }) => {
   // Handle message submission
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (message.trim() && !amIDrawing) {
-      sendMessage(message.trim());
+    const trimmedMessage = message.trim();
+    // Add length check before sending
+    if (trimmedMessage && !amIDrawing && trimmedMessage.length <= MAX_CHAT_LENGTH) {
+      sendMessage(trimmedMessage);
       setMessage("");
-      
-      // Re-enable auto-scroll when sending a message
       setAutoScroll(true);
-      
-      // Force immediate scroll to bottom
       setTimeout(forceScrollToBottom, 50);
     }
   };
@@ -191,15 +191,23 @@ const ChatSystem: React.FC<ChatSystemProps> = ({ darkMode }) => {
               "Type your message..."
             }
             disabled={gameState?.status === 'playing' && amIDrawing}
+            maxLength={MAX_CHAT_LENGTH}
             className={`w-full px-3 py-2 sm:px-4 sm:py-2.5 rounded-lg transition-colors text-sm sm:text-base ${
               darkMode
                 ? 'bg-gray-700 text-white placeholder-gray-400'
                 : 'bg-gray-100 text-gray-900 placeholder-gray-500'
-            } focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed`}
+            } focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed pr-10`}
           />
+          <span 
+             className={`absolute right-10 top-1/2 transform -translate-y-1/2 text-xs ${ 
+               message.length > MAX_CHAT_LENGTH ? 'text-red-500' : 'text-gray-400'
+             }`}
+          >
+             {message.length}/{MAX_CHAT_LENGTH}
+          </span>
           <button
             type="submit"
-            disabled={!message.trim() || (gameState?.status === 'playing' && amIDrawing)}
+            disabled={!message.trim() || (gameState?.status === 'playing' && amIDrawing) || message.length > MAX_CHAT_LENGTH}
             className="absolute right-1 top-1/2 transform -translate-y-1/2 p-1.5 sm:p-2 rounded-full text-indigo-500 hover:bg-indigo-100 dark:hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 sm:h-5 sm:w-5" viewBox="0 0 20 20" fill="currentColor">

@@ -1,6 +1,8 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "@remix-run/react";
 
+const MAX_USERNAME_LENGTH = 20; // Define max length constant
+
 export default function Index() {
   const [roomCode, setRoomCode] = useState("");
   const [playerName, setPlayerName] = useState("");
@@ -36,10 +38,16 @@ export default function Index() {
   };
 
   const validateInputs = () => {
-    if (!playerName.trim()) {
+    const trimmedName = playerName.trim();
+    if (!trimmedName) {
       setError("Please enter your name");
       return false;
     }
+    if (trimmedName.length > MAX_USERNAME_LENGTH) { // Add length check
+        setError(`Name cannot exceed ${MAX_USERNAME_LENGTH} characters.`);
+        return false;
+    }
+    setError(""); // Clear error if valid
     return true;
   };
 
@@ -187,7 +195,7 @@ export default function Index() {
             <div className="space-y-6">
               <div>
                 <label htmlFor="playerName" className={`block mb-2 text-sm font-medium ${darkMode ? 'text-gray-300' : 'text-gray-700'}`}>
-                  Your Name
+                  Your Name (Max {MAX_USERNAME_LENGTH} chars)
                 </label>
                 <input
                   type="text"
@@ -196,6 +204,7 @@ export default function Index() {
                   onChange={(e) => setPlayerName(e.target.value)}
                   placeholder="Enter your name"
                   required
+                  maxLength={MAX_USERNAME_LENGTH}
                   className={`w-full px-4 py-3 rounded-lg border ${
                     darkMode 
                       ? 'bg-gray-700 border-gray-600 text-white placeholder-gray-400' 
