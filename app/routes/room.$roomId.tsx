@@ -9,6 +9,7 @@ import DrawingCanvas from "~/components/DrawingCanvas";
 import GameLeaderboard from "~/components/GameLeaderboard";
 import { useWebSocket } from "~/context/WebSocketContext";
 import WebSocketErrorBoundary from "~/components/WebSocketErrorBoundary";
+import type { MetaFunction } from "@remix-run/node";
 
 // Custom styles
 const styles = `
@@ -63,6 +64,31 @@ if (typeof document !== 'undefined') {
   styleTag.textContent = styles;
   document.head.appendChild(styleTag);
 }
+
+export const meta: MetaFunction = ({ params }) => {
+  const roomId = params.roomId || "Game";
+  const title = `SketchGuess Room: ${roomId}`;
+  const description = `Join the SketchGuess drawing and guessing game in room ${roomId}!`;
+  // const imageUrl = `https://yourdomain.com/og-image-room.jpg`; // Could be generic or dynamic
+
+  return [
+    { title: title },
+    { name: "description", content: description },
+    // Discourage indexing of specific game rooms
+    { name: "robots", content: "noindex, follow" }, 
+    
+    // Open Graph / Facebook
+    { property: "og:title", content: title },
+    { property: "og:description", content: description },
+    { property: "og:type", content: "website" }, // Or maybe "game"?
+    // { property: "og:image", content: imageUrl },
+    
+    // Twitter
+    { name: "twitter:title", content: title },
+    { name: "twitter:description", content: description },
+    // { name: "twitter:image", content: imageUrl },
+  ];
+};
 
 export default function Room() {
   const params = useParams();

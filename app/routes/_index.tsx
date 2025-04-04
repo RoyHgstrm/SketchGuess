@@ -3,9 +3,25 @@ import { useState, useCallback } from "react";
 import { useNavigate } from "@remix-run/react";
 
 export const meta: MetaFunction = () => {
+  const title = "SketchGuess - Real-Time Drawing & Guessing Game";
+  const description = "Join or create a room and play a fun multiplayer drawing and guessing game with friends online. Free to play!";
+  // const imageUrl = "https://yourdomain.com/og-image-home.jpg"; // Replace with your actual domain and image
+  
   return [
-    { title: "SketchGuess - A fun drawing and guessing game" },
-    { name: "description", content: "Draw, guess, and have fun with friends!" },
+    { title: title },
+    { name: "description", content: description },
+    // Open Graph / Facebook
+    { property: "og:title", content: title },
+    { property: "og:description", content: description },
+    { property: "og:type", content: "website" },
+    // { property: "og:image", content: imageUrl },
+    // { property: "og:url", content: "https://yourdomain.com/" }, // Optional: Explicit URL for homepage
+    
+    // Twitter
+    { name: "twitter:title", content: title },
+    { name: "twitter:description", content: description },
+    // { name: "twitter:image", content: imageUrl }, 
+    // { name: "twitter:card", content: "summary_large_image" } // Default is already set in root
   ];
 };
 

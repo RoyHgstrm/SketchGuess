@@ -5,7 +5,8 @@ import {
   Scripts,
   ScrollRestoration,
   useRouteError,
-  isRouteErrorResponse
+  isRouteErrorResponse,
+  useLocation
 } from "@remix-run/react";
 import { cssBundleHref } from "@remix-run/css-bundle";
 import type { LinksFunction } from "@remix-run/node";
@@ -28,6 +29,10 @@ export const links: LinksFunction = () => [
     href: "https://fonts.googleapis.com/css2?family=Inter:ital,opsz,wght@0,14..32,100..900;1,14..32,100..900&display=swap",
   },
   { rel: "stylesheet", href: animationsStyle },
+  {
+    rel: "icon",
+    href: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E✏️%3C/text%3E%3C/svg%3E"
+  }
 ];
 
 // Add Error Boundary component
@@ -109,18 +114,56 @@ export function ErrorBoundary() {
 }
 
 export function Layout({ children }: { children: React.ReactNode }) {
+  const location = useLocation();
+  const currentUrl = `https://yourdomain.com${location.pathname}`;
+
+  const schema = {
+    "@context": "https://schema.org",
+    "@type": "WebApplication",
+    "name": "SketchGuess",
+    "url": "https://yourdomain.com",
+    "applicationCategory": "GameApplication",
+    "operatingSystem": "Any",
+    "offers": {
+      "@type": "Offer",
+      "price": "0"
+    },
+    "description": "A fun, real-time multiplayer drawing and guessing game."
+  };
+
   return (
-    <html lang="en">
+    <html lang="en" className="dark">
       <head>
         <meta charSet="utf-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
+        
+        <meta name="description" content="Draw, guess, and have fun with friends in SketchGuess, a real-time multiplayer game." />
+        <meta name="keywords" content="drawing game, guessing game, multiplayer, online game, sketch, guess, pictionary, skribblio" />
+        <meta name="robots" content="index, follow" />
+        
+        <meta property="og:type" content="website" />
+        <meta property="og:url" content={currentUrl} />
+        <meta property="og:title" content="SketchGuess - Multiplayer Drawing Game" />
+        <meta property="og:description" content="Draw, guess, and have fun with friends!" />
+        
+        <meta property="twitter:card" content="summary_large_image" />
+        <meta property="twitter:url" content={currentUrl} />
+        <meta property="twitter:title" content="SketchGuess - Multiplayer Drawing Game" />
+        <meta property="twitter:description" content="Draw, guess, and have fun with friends!" />
+
+        <link rel="canonical" href={currentUrl} />
+        
+        <script type="application/ld+json">
+          {JSON.stringify(schema)}
+        </script>
+
         <Meta />
+        
         <Links />
       </head>
-      <body>
+      <body className="bg-white dark:bg-gray-900 text-gray-900 dark:text-white min-h-screen">
         <WebSocketProvider>
           {children}
-          <ConnectionStatus />
         </WebSocketProvider>
         <ScrollRestoration />
         <Scripts />

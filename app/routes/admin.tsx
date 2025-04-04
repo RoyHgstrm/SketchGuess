@@ -3,8 +3,9 @@ import { MetaFunction } from "@remix-run/node";
 
 export const meta: MetaFunction = () => {
   return [
-    { title: "SketchGuess Admin - Game Statistics" },
-    { name: "description", content: "Admin dashboard for the SketchGuess drawing game" },
+    { title: "Admin Dashboard - SketchGuess" },
+    { name: "description", content: "Manage and view SketchGuess server statistics." },
+    { name: "robots", content: "noindex, nofollow" },
   ];
 };
 
