@@ -43,7 +43,23 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({ darkMode }) => {
   // Store drawing history as an array of actions
   const drawingHistoryRef = useRef<DrawingAction[]>([]);
 
-  const canDraw = gameState?.drawer?.name === currentPlayer?.name && gameState?.status === 'playing';
+  // Determine if the current player can draw by comparing IDs
+  const canDraw = gameState?.drawer?.id === currentPlayer?.id && gameState?.status === 'playing';
+
+  // Add debugging for drawer status
+  useEffect(() => {
+    // Log comparison specifically when status is playing
+    if (gameState?.status === 'playing') {
+      console.log('DrawingCanvas - Drawer check:', {
+        gs_drawerId: gameState?.drawer?.id,
+        cp_playerId: currentPlayer?.id,
+        calc_canDraw: gameState?.drawer?.id === currentPlayer?.id, // Log the direct comparison result
+        gs_status: gameState?.status,
+        final_canDraw: canDraw, // Log the final state variable value
+        gs_word: gameState?.word // Log the word from gameState
+      });
+    }
+  }, [gameState?.status, gameState?.drawer?.id, currentPlayer?.id, canDraw, gameState?.word]);
 
   // Function to clear the canvas with a background color
   const clearCanvas = useCallback((context: CanvasRenderingContext2D, canvas: HTMLCanvasElement) => {
@@ -356,7 +372,9 @@ const DrawingCanvas: React.FC<DrawingCanvasProps> = ({ darkMode }) => {
           {canDraw ? (
             <div className="flex items-center">
               <span className="font-medium text-green-400 mr-2">Your turn to draw:</span>
-              <span className="bg-gray-800 text-white px-3 py-1 rounded-lg font-bold">{gameState?.word || '...'}</span>
+              <span className="bg-gray-800 text-white px-3 py-1 rounded-lg font-bold">
+                {gameState.word ? gameState.word : 'Loading...'}
+              </span>
             </div>
           ) : (
             <div className="text-blue-400">

@@ -82,10 +82,9 @@ export default function Admin() {
       // The protocol, hostname, and port will be derived from the current page location
       const baseUrl = `${window.location.protocol}//${window.location.host}`;
       
-      const leaderboardUrl = `${baseUrl}/leaderboard`;
-      console.log("Fetching leaderboard from:", leaderboardUrl);
-      
       // Fetch leaderboard from the server
+      const leaderboardUrl = `${baseUrl}/api/leaderboard`;
+      console.log("Fetching leaderboard from:", leaderboardUrl);
       const leaderboardResponse = await fetch(leaderboardUrl);
       if (!leaderboardResponse.ok) {
         throw new Error("Failed to fetch leaderboard");
@@ -93,17 +92,25 @@ export default function Admin() {
       const leaderboardData = await leaderboardResponse.json();
       setTopPlayers(Array.isArray(leaderboardData) ? leaderboardData : []);
 
-      const statsUrl = `${baseUrl}/admin/stats`;
+      // Fetch server stats
+      const statsUrl = `${baseUrl}/api/stats`;
       console.log("Fetching stats from:", statsUrl);
-      
-      // Fetch real server stats from the new endpoint
       const statsResponse = await fetch(statsUrl);
       if (!statsResponse.ok) {
         throw new Error("Failed to fetch server statistics");
       }
       const statsData = await statsResponse.json();
       setServerStats(statsData);
-      setActiveRooms(statsData.activeRoomsList || []);
+      
+      // Fetch active rooms
+      const roomsUrl = `${baseUrl}/api/rooms`;
+      console.log("Fetching rooms from:", roomsUrl);
+      const roomsResponse = await fetch(roomsUrl);
+      if (!roomsResponse.ok) {
+        throw new Error("Failed to fetch active rooms");
+      }
+      const roomsData = await roomsResponse.json();
+      setActiveRooms(Array.isArray(roomsData) ? roomsData : []);
       
       setLastRefreshed(new Date());
     } catch (err) {

@@ -11,9 +11,10 @@ interface GameLeaderboardProps {
   players: LeaderboardPlayer[];
   darkMode: boolean;
   onNewGame: () => void;
+  onClose: () => void;
 }
 
-const GameLeaderboard: React.FC<GameLeaderboardProps> = ({ players, darkMode, onNewGame }) => {
+const GameLeaderboard: React.FC<GameLeaderboardProps> = ({ players, darkMode, onNewGame, onClose }) => {
   // Sort players by score in descending order
   const sortedPlayers = [...players].sort((a, b) => b.score - a.score);
   
@@ -29,6 +30,10 @@ const GameLeaderboard: React.FC<GameLeaderboardProps> = ({ players, darkMode, on
       case 2: return '🥉';
       default: return '🏅';
     }
+  };
+
+  const handleContinue = () => {
+    onClose();
   };
 
   return (
@@ -116,14 +121,14 @@ const GameLeaderboard: React.FC<GameLeaderboardProps> = ({ players, darkMode, on
           {/* New game button */}
           <div className="mt-8 text-center">
             <button
-              onClick={onNewGame}
+              onClick={handleContinue}
               className={`py-3 px-8 rounded-lg ${
                 darkMode 
                   ? 'bg-indigo-600 hover:bg-indigo-700' 
                   : 'bg-indigo-500 hover:bg-indigo-600'
               } text-white font-medium transition-colors`}
             >
-              Start New Game
+              Continue
             </button>
           </div>
         </div>
@@ -132,4 +137,4 @@ const GameLeaderboard: React.FC<GameLeaderboardProps> = ({ players, darkMode, on
   );
 };
 
-export default GameLeaderboard; 
+export default GameLeaderboard;

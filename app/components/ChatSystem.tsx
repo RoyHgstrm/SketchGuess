@@ -12,8 +12,8 @@ const ChatSystem: React.FC<ChatSystemProps> = ({ darkMode }) => {
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const [autoScroll, setAutoScroll] = useState(true);
 
-  // Check if current player is drawing
-  const amIDrawing = currentPlayer?.isDrawing || false;
+  // Check if current player is drawing by comparing IDs
+  const amIDrawing = gameState?.drawer?.id === currentPlayer?.id && gameState?.status === 'playing';
 
   // Improved auto-scroll behavior
   const scrollToBottom = () => {

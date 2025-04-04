@@ -31,9 +31,8 @@ export default function Index() {
 
   const generateRandomRoomCode = () => {
     // Generate a random 4-digit number between 1000 and 9999
-    const roomCode = Math.floor(Math.random() * 9000) + 1000;
-    // Convert to string and ensure it's 4 digits
-    setRoomCode(roomCode.toString());
+    const roomCode = Math.floor(1000 + Math.random() * 9000);
+    return roomCode.toString();
   };
 
   const validateInputs = () => {
@@ -52,7 +51,11 @@ export default function Index() {
     
     try {
       // Generate a random room code if not already set
-      const finalRoomCode = roomCode.trim() || generateRandomRoomCode();
+      let finalRoomCode = roomCode.trim();
+      if (!finalRoomCode) {
+        finalRoomCode = generateRandomRoomCode();
+        setRoomCode(finalRoomCode);
+      }
       
       // Store player name in session storage
       sessionStorage.setItem("playerName", playerName);

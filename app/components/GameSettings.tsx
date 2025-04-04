@@ -17,6 +17,7 @@ const GameSettings: React.FC<GameSettingsProps> = ({ settings, onUpdate, darkMod
   const [isOpen, setIsOpen] = useState(false);
   const [localSettings, setLocalSettings] = useState<GameSettingsData>({
     ...settings,
+    maxRounds: settings.maxRounds ?? 3,
     useOnlyCustomWords: settings.useOnlyCustomWords ?? false
   });
   const [customWordsText, setCustomWordsText] = useState(
@@ -25,7 +26,10 @@ const GameSettings: React.FC<GameSettingsProps> = ({ settings, onUpdate, darkMod
 
   useEffect(() => {
     if (!isOpen) {
-      setLocalSettings({...settings, useOnlyCustomWords: settings.useOnlyCustomWords ?? false });
+      setLocalSettings({...settings, 
+        maxRounds: settings.maxRounds ?? 3,
+        useOnlyCustomWords: settings.useOnlyCustomWords ?? false 
+      });
       setCustomWordsText(Array.isArray(settings.customWords) ? settings.customWords.join('\n') : '');
     }
   }, [settings, isOpen]);
@@ -54,7 +58,10 @@ const GameSettings: React.FC<GameSettingsProps> = ({ settings, onUpdate, darkMod
 
   const handleCancel = () => {
     setIsOpen(false);
-    setLocalSettings({...settings, useOnlyCustomWords: settings.useOnlyCustomWords ?? false });
+    setLocalSettings({...settings, 
+      maxRounds: settings.maxRounds ?? 3,
+      useOnlyCustomWords: settings.useOnlyCustomWords ?? false 
+    });
     setCustomWordsText(Array.isArray(settings.customWords) ? settings.customWords.join('\n') : '');
   };
 
@@ -84,7 +91,7 @@ const GameSettings: React.FC<GameSettingsProps> = ({ settings, onUpdate, darkMod
         
         <div className="p-4 space-y-4 max-h-[70vh] overflow-y-auto">
           <div>
-            <label className="block text-sm font-medium mb-1">Number of Rounds</label>
+            <label className="block text-sm font-medium mb-1">Number of Rounds (Each player draws once per round)</label>
             <div className="flex items-center">
               <input
                 type="range"
@@ -101,10 +108,11 @@ const GameSettings: React.FC<GameSettingsProps> = ({ settings, onUpdate, darkMod
                 {localSettings.maxRounds}
               </div>
             </div>
+            <p className="text-xs text-gray-400 mt-1">Total turns = Rounds × Players</p>
           </div>
 
           <div>
-            <label className="block text-sm font-medium mb-1">Time per Round (seconds)</label>
+            <label className="block text-sm font-medium mb-1">Time per Turn (seconds)</label>
             <div className="flex items-center">
               <input
                 type="range"

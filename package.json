@@ -1,15 +1,16 @@
 {
-  "name": "drawtogether",
+  "name": "sketchguess",
   "private": true,
   "sideEffects": false,
   "type": "module",
   "scripts": {
     "build": "remix build",
     "dev": "remix dev --manual",
-    "start": "remix-serve build",
+    "start": "remix-serve build/index.js",
     "websocket": "node websocket-server.js",
     "websocket:prod": "NODE_ENV=production node websocket-server.js",
-    "start:prod": "NODE_ENV=production remix-serve build",
+    "start:prod": "NODE_ENV=production remix-serve build/index.js",
+    "start:docker": "NODE_ENV=production node server.js",
     "start:all": "concurrently \"npm run start\" \"npm run websocket\"",
     "start:all:prod": "concurrently \"npm run start:prod\" \"npm run websocket:prod\"",
     "typecheck": "tsc"

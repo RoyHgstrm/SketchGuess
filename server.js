@@ -2,102 +2,228 @@ import { createRequestHandler } from '@remix-run/express';
 import { installGlobals } from '@remix-run/node';
 import express from 'express';
 import http from 'http';
-import { WebSocketServer } from 'ws'; // Import WebSocketServer
+import { WebSocketServer, WebSocket } from 'ws';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { runWebSocketServerLogic } from './websocket-server.js'; // We'll need to export logic from websocket-server.js
+import fs from 'fs';
+
+// Import WebSocket server logic directly
+import { 
+  loadLeaderboard, 
+  getTopPlayers, 
+  DEFAULT_WORDS, 
+  DEFAULT_SETTINGS,
+  LEADERBOARD_FILE,
+  runWebSocketServerLogic,
+  // Import Handlers
+  handleJoin,
+  handleReady,
+  handleGameSettings,
+  handleLeave,
+  handleDrawAction, // Combined handler for draw actions
+  handleGuess,
+  handleChat,
+  handleStartNewGameRequest,
+  handleKickPlayer,
+  handlePlayerLeave // Separate handler for disconnects
+} from './websocket-server.js';
 
 installGlobals();
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const viteDevServer =
-  process.env.NODE_ENV === 'production'
-    ? undefined
-    : await import('vite').then((vite) =>
-        vite.createServer({
-          server: { middlewareMode: true },
-        })
-      );
+// Initialize state (Keep rooms map accessible)
+const rooms = new Map(); 
+let totalConnections = 0;
+const startTime = Date.now(); // Use Date.now() for consistency
+let leaderboard = loadLeaderboard() || [];
 
-// The build output is directly in the build directory, not in build/server
-// const productionBuildPath = path.resolve(__dirname, 'build', 'server', 'index.js');
-
-const remixHandler = createRequestHandler({
-  build: viteDevServer
-    ? () => viteDevServer.ssrLoadModule('virtual:remix/server-build')
-    // Import directly from build directory
-    : await import('./build/index.js'),
-});
-
+// Create Express app
 const app = express();
 
-// Create exported functions to expose admin APIs
-export let getServerStats;
-export let getLeaderboard;
-export let getActiveRoomsList;
-
 // Handle asset requests
-if (viteDevServer) {
-  app.use(viteDevServer.middlewares);
-} else {
-  // In production, assets are served from ./public/build
-  // And the rest of the public assets from ./public
-  app.use(
-    '/build',
-    express.static(path.join(__dirname, 'public', 'build'), {
-      immutable: true,
-      maxAge: '1y',
-    })
-  );
-   app.use(express.static(path.join(__dirname, 'public'), { maxAge: '1h' }));
-}
+app.use(
+  '/build',
+  express.static('public/build', { immutable: true, maxAge: '1y' })
+);
+app.use(express.static('public', { maxAge: '1h' }));
 
-// Add API routes for admin dashboard
-app.get('/leaderboard', (req, res) => {
-  if (typeof getLeaderboard === 'function') {
-    res.json(getLeaderboard());
-  } else {
-    res.status(503).json({ error: 'Leaderboard service not available' });
-  }
+// Create HTTP server
+const server = http.createServer(app);
+
+// Create WebSocket server attached to the HTTP server
+const wss = new WebSocketServer({ server });
+
+// Initialize only the background tasks (heartbeat, cleanup) from websocket-server
+// We need access to the global `rooms` map for stats
+const { getServerStats, getActiveRoomsList } = runWebSocketServerLogic(wss);
+console.log('WebSocket background logic initialized.');
+
+// Admin API endpoints using functions returned or accessible
+app.get('/api/stats', (req, res) => {
+  const stats = getServerStats();
+  // Add the default words list to the stats response
+  const statsWithWords = {
+    ...stats,
+    defaultWords: DEFAULT_WORDS // Include the imported default words
+  };
+  console.log("Serving stats (including default words):", statsWithWords);
+  res.json(statsWithWords); // Send the combined object
 });
 
-app.get('/admin/stats', (req, res) => {
-  if (typeof getServerStats === 'function' && typeof getActiveRoomsList === 'function') {
-    const stats = getServerStats();
-    stats.activeRoomsList = getActiveRoomsList();
-    res.json(stats);
-  } else {
-    res.status(503).json({ error: 'Stats service not available' });
-  }
+app.get('/api/leaderboard', (req, res) => {
+  const top = getTopPlayers();
+  console.log(`Serving top ${top.length} players`);
+  res.json(top);
+});
+
+app.get('/api/rooms', (req, res) => {
+  // Implement getActiveRoomsList logic directly
+  const activeRoomsData = [];
+  rooms.forEach((room, roomId) => {
+    const activePlayers = room.players.filter(p => !p.disconnected);
+    if (activePlayers.length > 0) {
+      activeRoomsData.push({
+        roomId,
+        playerCount: activePlayers.length,
+        isActive: room.status === 'playing',
+        currentTurn: room.status === 'playing' ? room.currentTurn : 0,
+        maxTurns: room.status === 'playing' ? room.maxTurns : (room.settings.maxCycles * activePlayers.length),
+        timeLeft: room.gameState?.timeLeft || 0,
+        players: activePlayers.map(p => ({
+          name: p.name,
+          score: p.score || 0,
+          isReady: p.isReady,
+          isDrawing: p.isDrawing,
+          hasGuessedCorrectly: p.hasGuessedCorrectly
+        })),
+        settings: {
+          maxCycles: room.settings.maxCycles,
+          timePerRound: room.settings.timePerRound,
+          customWords: room.settings.customWords || null,
+          useOnlyCustomWords: room.settings.useOnlyCustomWords || false
+        }
+      });
+    }
+  });
+  console.log(`Serving ${activeRoomsData.length} active rooms`);
+  res.json(activeRoomsData);
 });
 
 // Handle Remix requests
-app.all('*', remixHandler);
+app.all(
+  '*',
+  createRequestHandler({
+    build: await import('./build/index.js')
+  })
+);
 
-const port = process.env.PORT || 3000;
-const wsPort = process.env.WS_PORT || 8080; // We won't directly use this for listening
-const host = process.env.HOST || '0.0.0.0'; // Listen on all interfaces
+// WebSocket connection handling directly in server.js
+wss.on('connection', (ws, req) => {
+  totalConnections++;
+  console.log(`Client connected. Total connections: ${totalConnections}`);
+  console.log("New connection attempt from", req?.socket?.remoteAddress || 'unknown');
 
-// Create HTTP server using Express app
-const server = http.createServer(app);
+  // Attach properties to ws instance
+  ws.roomId = null; 
+  ws.playerId = null;
+  ws.playerName = null; 
+  ws.isAlive = true;
 
-// --- WebSocket Server Integration ---
-// Create a new WebSocket server instance attached to the *same* HTTP server
-const wss = new WebSocketServer({ server }); // Attach to the existing HTTP server
+  ws.on('pong', () => { ws.isAlive = true; });
 
-console.log(`WebSocket server attaching to HTTP server on port ${port}`);
+  ws.on('message', (data) => {
+    try {
+      const message = JSON.parse(data.toString());
+      const type = message.type;
 
-// Run the existing WebSocket server logic, passing the created wss instance
-const wsServerExports = runWebSocketServerLogic(wss);
+      // Route message to the appropriate handler
+      switch (type) {
+        case 'join':
+          handleJoin(ws, message, rooms, totalConnections); // Pass rooms map and counter
+          break;
+        case 'ready':
+          handleReady(ws, message, rooms);
+          break;
+        case 'gameSettings':
+        case 'updateSettings':
+          handleGameSettings(ws, message, rooms);
+          break;
+        case 'leave':
+          handleLeave(ws, rooms);
+          break;
+        case 'draw':
+        case 'clear':
+        case 'pathStart':
+        case 'pathEnd':
+          handleDrawAction(ws, message, rooms);
+          break;
+        case 'guess':
+          handleGuess(ws, message, rooms);
+          break;
+        case 'chat':
+        case 'system': // Treat player-sent system messages as chat
+          handleChat(ws, message, rooms);
+          break;
+        case 'startNewGameRequest':
+          handleStartNewGameRequest(ws, message, rooms);
+          break;
+        case 'kickPlayer':
+          handleKickPlayer(ws, message, rooms);
+          break;
+        default:
+          console.log(`Received unknown message type: '${type}'`);
+          if (ws.readyState === WebSocket.OPEN) {
+             ws.send(JSON.stringify({ type: "error", content: "Unknown command." }));
+          }
+      }
+    } catch (err) {
+      console.error('Error processing message:', err, data.toString());
+      if (ws.readyState === WebSocket.OPEN) {
+         ws.send(JSON.stringify({ type: "error", content: "Failed to process message." }));
+      }
+    }
+  });
 
-// Store the exported admin functions for use in Express routes
-getServerStats = wsServerExports.getServerStats;
-getLeaderboard = wsServerExports.getLeaderboard;
-getActiveRoomsList = wsServerExports.getActiveRoomsList;
-// ----------------------------------
+  ws.on('close', (code, reason) => {
+    console.log(`Connection closed for ${ws.playerName || ws.playerId || 'unknown'}. Code: ${code}, Reason: ${reason}`);
+    handlePlayerLeave(ws, rooms); // Call the imported handler
+  });
 
-server.listen(port, host, () => {
-  console.log(`Express server listening on http://${host}:${port}`);
+  ws.on('error', (error) => {
+    console.error(`WebSocket error for ${ws.playerName || ws.playerId || 'unknown'}:`, error);
+    handlePlayerLeave(ws, rooms); // Call the imported handler
+  });
+});
+
+// Start server
+const PORT = process.env.PORT || 3000;
+const HOST = process.env.HOST || '0.0.0.0';
+
+server.listen(PORT, HOST, () => {
+  console.log(`Integrated server running on ${HOST}:${PORT}`);
+  
+  // Handle graceful shutdown
+  process.on('SIGTERM', () => {
+    console.log('SIGTERM received. Shutting down gracefully...');
+    wss.close(() => { // Close WebSocket server first
+      console.log('WebSocket server closed.');
+      server.close(() => {
+        console.log('HTTP server closed.');
+        process.exit(0);
+      });
+    });
+  });
+  
+  process.on('SIGINT', () => {
+    console.log('SIGINT received. Shutting down gracefully...');
+     wss.close(() => {
+      console.log('WebSocket server closed.');
+      server.close(() => {
+        console.log('HTTP server closed.');
+        process.exit(0);
+      });
+    });
+  });
 }); 

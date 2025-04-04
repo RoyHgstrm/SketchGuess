@@ -6,7 +6,6 @@ interface Player {
   name: string;
   score: number;
   isReady: boolean;
-  isDrawing: boolean;
   hasGuessedCorrectly: boolean;
   isPartyLeader: boolean;
 }
@@ -15,13 +14,13 @@ interface GameState {
   status: string;
   currentRound: number;
   maxRounds: number;
+  totalTurns?: number;
   timeLeft: number;
   word?: string;
   drawer?: {
     id: string;
     name: string;
   };
-  isDrawing?: boolean;
 }
 
 interface ChatMessage {
@@ -96,8 +95,8 @@ interface WebSocketContextType {
 
 // Default game settings
 const DEFAULT_GAME_SETTINGS: GameSettings = {
-  maxRounds: 5,
-  timePerRound: 40,
+  maxRounds: 3,
+  timePerRound: 60,
   customWords: [],
   useOnlyCustomWords: false
 };
@@ -128,42 +127,31 @@ export const WebSocketContext = createContext<WebSocketContextType>({
 // Update the getWebSocketURL function to better handle different environments
 const getWebSocketURL = (roomId: string) => {
   try {
-    // First check if we have an environment variable
-    if (typeof process !== 'undefined' && process.env && process.env.WEBSOCKET_URL) {
-      const baseUrl = process.env.WEBSOCKET_URL.endsWith('/') 
-        ? process.env.WEBSOCKET_URL.slice(0, -1) 
-        : process.env.WEBSOCKET_URL;
-      
-      console.log(`Using env WEBSOCKET_URL: ${baseUrl}`);
-      return `${baseUrl}?roomId=${encodeURIComponent(roomId)}`;
+    // First try to get the WebSocket URL from environment variable
+    const wsUrl = process.env.WS_URL;
+    if (wsUrl) {
+      console.log("Using WebSocket URL from environment:", wsUrl);
+      return `${wsUrl}?roomId=${encodeURIComponent(roomId)}`;
     }
-    
-    // If not, derive from current window location
-    if (typeof window !== 'undefined' && window.location) {
-      // Get protocol (http -> ws, https -> wss)
+
+    // If no environment variable, derive from current window location
+    // Use the same host and port as the current page
+    if (typeof window !== 'undefined') {
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      // Always use the same host
       const host = window.location.hostname;
-      
-      // For Docker: Use the same port as the HTTP server since we've integrated the WebSocket server
-      // This fixes connection issues in containerized environments
-      const port = window.location.port;
-      
-      // Only add port if it exists
-      const portPart = port ? `:${port}` : '';
-      const baseUrl = `${protocol}//${host}${portPart}`;
-      
-      console.log(`Derived WebSocket URL: ${baseUrl}`);
-      return `${baseUrl}?roomId=${encodeURIComponent(roomId)}`;
+      const port = window.location.port || (window.location.protocol === 'https:' ? '443' : '80');
+      const url = `${protocol}//${host}${port === '80' || port === '443' ? '' : `:${port}`}`;
+      console.log("Using WebSocket URL from window location:", url);
+      return `${url}?roomId=${encodeURIComponent(roomId)}`;
     }
-    
-    // Fallback for all other cases
-    console.log('Using fallback localhost WebSocket URL');
-    return `ws://localhost:8080?roomId=${encodeURIComponent(roomId)}`;
+
+    // Fallback to localhost
+    console.log("Using fallback WebSocket URL: ws://localhost:3000");
+    return `ws://localhost:3000?roomId=${encodeURIComponent(roomId)}`;
   } catch (error) {
-    console.error('Error constructing WebSocket URL:', error);
-    // Fallback on error
-    return `ws://localhost:8080?roomId=${encodeURIComponent(roomId)}`;
+    console.error("Error getting WebSocket URL:", error);
+    // Fallback to localhost
+    return `ws://localhost:3000?roomId=${encodeURIComponent(roomId)}`;
   }
 };
 
@@ -184,9 +172,10 @@ export const WebSocketProvider: React.FC<{children: React.ReactNode}> = ({ child
   const [currentPlayer, setCurrentPlayer] = useState<Player | null>(null);
   const [leaderboard, setLeaderboard] = useState<LeaderboardPlayer[] | null>(null);
   
-  // Player name storage
+  // Player name and ID storage
   const [playerName, setPlayerName] = useState("");
   const [roomId, setRoomId] = useState("");
+  const [playerId, setPlayerId] = useState<string | null>(null);
   
   // Refs for managing WebSocket connection
   const wsRef = useRef<ExtendedWebSocket | null>(null);
@@ -266,6 +255,15 @@ export const WebSocketProvider: React.FC<{children: React.ReactNode}> = ({ child
     }
   }, []);
   
+  // Add effect to load playerId from sessionStorage on initial mount
+  useEffect(() => {
+    const storedId = sessionStorage.getItem('playerId');
+    if (storedId) {
+      console.log('CLIENT DEBUG: Restoring playerId from sessionStorage:', storedId);
+      setPlayerId(storedId);
+    }
+  }, []);
+
   // Update the handleWebSocketMessage function to properly handle pings
   const handleWebSocketMessage = useCallback((event: MessageEvent) => {
     try {
@@ -296,32 +294,42 @@ export const WebSocketProvider: React.FC<{children: React.ReactNode}> = ({ child
           const newPlayers: Player[] = data.players || [];
           setPlayers(newPlayers);
           
-          // Update currentPlayer based on the latest list and stored playerName
-          if (playerName && newPlayers.length > 0) {
-            const me = newPlayers.find((p: Player) => p.name === playerName);
+          // Use the playerId from state first, then sessionStorage as fallback
+          const idToFind = playerId || sessionStorage.getItem('playerId');
+          console.log(`CLIENT DEBUG: Updating currentPlayer based on playerList. Using ID: ${idToFind}`);
+
+          if (idToFind && newPlayers.length > 0) {
+            const me = newPlayers.find((p: Player) => {
+              // Log the comparison being made
+              // console.log(`CLIENT DEBUG: Comparing find: p.id (${p.id}) === idToFind (${idToFind})`);
+              return p.id === idToFind;
+            });
             if (me) {
-              // Update with full details from the list
-              // Ensure we maintain the correct structure matching the Player interface
               const updatedCurrentPlayer: Player = {
-                id: me.id || me.name, // Use id, fallback to name
+                id: me.id,
                 name: me.name,
                 score: me.score || 0,
                 isReady: me.isReady || false,
-                isDrawing: me.isDrawing || false,
                 hasGuessedCorrectly: me.hasGuessedCorrectly || false,
                 isPartyLeader: me.isPartyLeader || false
               };
-              setCurrentPlayer(updatedCurrentPlayer);
-              console.log("Updated currentPlayer from playerList:", updatedCurrentPlayer);
+              // Avoid unnecessary state updates if object is identical (shallow compare)
+              setCurrentPlayer(prev => {
+                if (JSON.stringify(prev) !== JSON.stringify(updatedCurrentPlayer)) {
+                    console.log('CLIENT DEBUG: currentPlayer updated in playerList handler:', updatedCurrentPlayer);
+                    return updatedCurrentPlayer;
+                }
+                return prev;
+              });
             } else {
-              // If 'me' is not in the list (e.g., kicked or disconnected)
-              // Nullify currentPlayer if they are no longer in the list received from server
-              console.warn(`Current player ${playerName} not found in received playerList. Setting currentPlayer to null.`);
-              setCurrentPlayer(null);
+              console.warn(`CLIENT WARN: Current player ID ${idToFind} not found in received playerList. currentPlayer state might be stale.`);
+              // setCurrentPlayer(null); // Avoid setting to null if player briefly disappears
+              // console.log('CLIENT DEBUG: currentPlayer set to null in playerList handler');
             }
           } else if (newPlayers.length === 0) {
-              // If the player list is empty, nullify currentPlayer
-              setCurrentPlayer(null);
+             console.log('CLIENT DEBUG: Received empty playerList. Setting players to empty array.');
+            // setCurrentPlayer(null); // Avoid setting to null
+            // console.log('CLIENT DEBUG: currentPlayer set to null (empty playerList)');
           }
           break;
         case 'playerUpdate':
@@ -345,37 +353,50 @@ export const WebSocketProvider: React.FC<{children: React.ReactNode}> = ({ child
             timestamp: data.timestamp || Date.now()
           }]);
           break;
-        case 'gameState':
-          console.log('Game state update:', data.gameState);
-          // Only update the game state if there are meaningful changes
-          // This prevents unnecessary canvas redraws
+        case 'gameState': {
+          // Update the gameState by merging new data with previous state
           setGameState(prevState => {
-            if (!prevState) return data.gameState;
-            
-            // Check if this is just a time update or has other changes
-            const isJustTimeUpdate = 
-              prevState.status === data.gameState.status &&
-              prevState.currentRound === data.gameState.currentRound &&
-              prevState.maxRounds === data.gameState.maxRounds &&
-              prevState.isDrawing === data.gameState.isDrawing &&
-              prevState.drawer?.id === data.gameState.drawer?.id;
-              
-            // If it's just a time update, only update time
-            if (isJustTimeUpdate) {
-              return {
-                ...prevState,
-                timeLeft: data.gameState.timeLeft
-              };
-            }
-            
-            // Otherwise update the full state
-            return {
-              ...prevState,
-              ...data.gameState,
-              isDrawing: data.gameState.isDrawing
+            const newState = {
+              ...(prevState || {}), // Keep existing state
+              ...(data.gameState || {}) // Overwrite with new data
             };
+            console.log('CLIENT DEBUG: Updated gameState:', newState);
+            return newState;
           });
+          
+          // Check for player identification info in the gameState message
+          if (data.playerInfo) {
+            console.log('CLIENT DEBUG: Received playerInfo in gameState message:', data.playerInfo);
+            // Update currentPlayer with the server's direct identification
+            setCurrentPlayer(prev => {
+              // Create updated player data from direct server identification
+              // plus any existing state we want to preserve
+              const updatedPlayer: Player = {
+                id: data.playerInfo.id,
+                name: data.playerInfo.name,
+                score: prev?.score || 0,
+                isReady: prev?.isReady || false,
+                hasGuessedCorrectly: prev?.hasGuessedCorrectly || false,
+                isPartyLeader: data.playerInfo.isPartyLeader || false
+              };
+              
+              // Only update if ID actually changed to avoid loops
+              if (!prev || prev.id !== updatedPlayer.id || prev.name !== updatedPlayer.name || prev.isPartyLeader !== updatedPlayer.isPartyLeader) {
+                console.log('CLIENT DEBUG: Updating currentPlayer from gameState playerInfo:', updatedPlayer);
+                // Also update the stored player ID
+                if (updatedPlayer.id && updatedPlayer.id !== playerId) {
+                  console.log(`CLIENT DEBUG: Updating stored player ID from ${playerId} to ${updatedPlayer.id}`);
+                  setPlayerId(updatedPlayer.id);
+                  sessionStorage.setItem('playerId', updatedPlayer.id);
+                }
+                return updatedPlayer;
+              }
+              return prev; // No change needed
+            });
+          }
+          
           break;
+        }
         case 'gameSettings':
           setGameSettings(data.settings);
           break;
@@ -475,30 +496,32 @@ export const WebSocketProvider: React.FC<{children: React.ReactNode}> = ({ child
           consecutiveFailuresRef.current = 0;
           setIsReconnecting(false);
 
-          // Set the current player based on details from the server
+          // Set the current player AND store the received player ID
           if (data.playerDetails) {
-            console.log('Setting current player from server details:', data.playerDetails);
-            setCurrentPlayer({
-              id: data.playerDetails.id || data.playerDetails.name, // Use ID or fallback to name
+            const receivedPlayerId = data.playerDetails.id;
+            console.log('CLIENT DEBUG: Received playerDetails in joined handler:', data.playerDetails);
+            if (!receivedPlayerId) {
+               console.error('CLIENT ERROR: Received playerDetails but ID is missing!', data.playerDetails);
+               return; // Stop processing if ID is missing
+            }
+            console.log(`CLIENT DEBUG: Setting player ID state to: ${receivedPlayerId}`);
+            setPlayerId(receivedPlayerId);
+            sessionStorage.setItem('playerId', receivedPlayerId);
+            console.log(`CLIENT DEBUG: Stored playerId in sessionStorage: ${receivedPlayerId}`);
+
+            const newCurrentPlayer: Player = {
+              id: receivedPlayerId,
               name: data.playerDetails.name,
-              score: 0, // Score will come via playerList or gameState
-              isReady: false,
-              isDrawing: false,
+              score: data.playerDetails.score || 0,
+              isReady: data.playerDetails.isReady || false,
               hasGuessedCorrectly: false,
               isPartyLeader: data.playerDetails.isPartyLeader || false
-            });
+            };
+            setCurrentPlayer(newCurrentPlayer);
+            console.log('CLIENT DEBUG: currentPlayer set in joined handler:', newCurrentPlayer);
           } else {
-            // Fallback if details are missing (should not happen with server changes)
-            console.warn('Joined message missing playerDetails, attempting fallback');
-            setCurrentPlayer(prev => prev ? { ...prev, name: playerName } : {
-              id: playerName,
-              name: playerName,
-              score: 0,
-              isReady: false,
-              isDrawing: false,
-              hasGuessedCorrectly: false,
-              isPartyLeader: false
-            });
+             console.warn('CLIENT WARN: Joined message missing playerDetails. Player ID might be incorrect.');
+            // Fallback logic removed as it was problematic and ID should come from server
           }
           break;
         }
@@ -517,7 +540,7 @@ export const WebSocketProvider: React.FC<{children: React.ReactNode}> = ({ child
     } catch (error) {
       console.error('Error processing WebSocket message:', error);
     }
-  }, [playerName]);
+  }, [playerId, setCurrentPlayer, setPlayers, setPlayerId]); // Add setPlayerId dependency
 
   // Manual retry function for when automatic reconnects fail
   const retryConnection = useCallback(() => {
@@ -660,9 +683,14 @@ export const WebSocketProvider: React.FC<{children: React.ReactNode}> = ({ child
       return;
     }
 
-    // Store room and player name for reconnection
+    // Store room and player name
     setRoomId(roomId);
     setPlayerName(playerName);
+    
+    // Retrieve stored playerId for reconnection attempts
+    const storedPlayerId = playerId || sessionStorage.getItem('playerId');
+    console.log(`Connect called. Room: ${roomId}, Name: ${playerName}, Stored ID: ${storedPlayerId}`);
+    setPlayerId(storedPlayerId); // Ensure state reflects storage
 
     // Check if we're connecting too frequently
     if (isConnectingTooFrequently()) {
@@ -696,7 +724,8 @@ export const WebSocketProvider: React.FC<{children: React.ReactNode}> = ({ child
         wsRef.current.send(JSON.stringify({
           type: 'join',
           roomId,
-          playerName
+          playerName,
+          playerId: storedPlayerId
         }));
         return;
       } catch (error) {
@@ -751,13 +780,16 @@ export const WebSocketProvider: React.FC<{children: React.ReactNode}> = ({ child
           setConnectionError(null);
         }, 100);
         
-        // Send join message to register with the server
+        // Send join message with playerId if available
         try {
-          ws.send(JSON.stringify({
+          const joinMessage = {
             type: 'join',
             roomId,
-            playerName
-          }));
+            playerName,
+            playerId: storedPlayerId
+          };
+          console.log("Sending join message:", joinMessage);
+          ws.send(JSON.stringify(joinMessage));
         } catch (error) {
           console.error('Error sending join message:', error);
         }
@@ -835,7 +867,7 @@ export const WebSocketProvider: React.FC<{children: React.ReactNode}> = ({ child
       // Schedule reconnect on error
       scheduleReconnect(roomId, playerName);
     }
-  }, [handleWebSocketMessage, scheduleReconnect, isReconnecting]);
+  }, [isConnectingTooFrequently, recordConnectionAttempt, handleWebSocketMessage, scheduleReconnect, playerId]);
 
   // Remove heartbeat system
   const startPingInterval = (ws: WebSocket) => {
@@ -1007,9 +1039,9 @@ export const WebSocketProvider: React.FC<{children: React.ReactNode}> = ({ child
     }
     
     // Ensure all properties are properly formatted
-    const formattedSettings = {
-      maxRounds: settings.maxRounds || DEFAULT_GAME_SETTINGS.maxRounds,
-      timePerRound: settings.timePerRound || DEFAULT_GAME_SETTINGS.timePerRound,
+    const formattedSettings: GameSettings = {
+      maxRounds: settings.maxRounds ?? DEFAULT_GAME_SETTINGS.maxRounds,
+      timePerRound: settings.timePerRound ?? DEFAULT_GAME_SETTINGS.timePerRound,
       customWords: Array.isArray(settings.customWords) ? settings.customWords : [],
       useOnlyCustomWords: settings.useOnlyCustomWords === true
     };

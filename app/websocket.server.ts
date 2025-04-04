@@ -625,7 +625,7 @@ wss.on('connection', (ws: WebSocket, req) => {
                     id: generateId(),
                     type: 'system',
                     playerName: 'System',
-                    content: `${currentPlayer.name} made a guess`,
+                    content: `${currentPlayer?.name || 'A player'} made a guess`,
                     timestamp: Date.now()
                   }
                 }));
@@ -769,7 +769,27 @@ setInterval(() => {
   });
 }, 60000);
 
-const PORT = process.env.PORT || 8080;
-server.listen(PORT, () => {
-  console.log(`WebSocket server running on port ${PORT}`);
+const PORT = Number(process.env.PORT) || 3000;
+const host = process.env.HOST || '0.0.0.0';
+
+// Start the server
+server.listen(PORT, host, () => {
+  console.log(`WebSocket server running on ${host}:${PORT}`);
+  
+  // Handle process termination
+  process.on('SIGTERM', () => {
+    console.log('SIGTERM received. Shutting down gracefully...');
+    server.close(() => {
+      console.log('Server closed');
+      process.exit(0);
+    });
+  });
+
+  process.on('SIGINT', () => {
+    console.log('SIGINT received. Shutting down gracefully...');
+    server.close(() => {
+      console.log('Server closed');
+      process.exit(0);
+    });
+  });
 }); 

@@ -69,7 +69,7 @@ export default function Room() {
   const navigate = useNavigate();
   const [darkMode, setDarkMode] = useState(true);
   const [playerName, setPlayerName] = useState<string>("");
-  const [showCopiedTooltip, setShowCopiedTooltip] = useState(false);
+  const [copiedState, setCopiedState] = useState(false);
   const { notifications, removeNotification } = useNotifications();
   const { 
     connect, 
@@ -80,18 +80,14 @@ export default function Room() {
     startNewGame 
   } = useWebSocket();
 
-  // Add copy functions
   const copyRoomCode = useCallback(() => {
-    navigator.clipboard.writeText(params.roomId || "");
-    setShowCopiedTooltip(true);
-    setTimeout(() => setShowCopiedTooltip(false), 2000);
+    navigator.clipboard.writeText(params.roomId || "").then(() => {
+      setCopiedState(true);
+      setTimeout(() => setCopiedState(false), 2000);
+    }).catch(err => {
+      console.error('Failed to copy room code: ', err);
+    });
   }, [params.roomId]);
-
-  const copyRoomLink = useCallback(() => {
-    navigator.clipboard.writeText(window.location.href);
-    setShowCopiedTooltip(true);
-    setTimeout(() => setShowCopiedTooltip(false), 2000);
-  }, []);
 
   useEffect(() => {
     // Get player name from session storage
@@ -115,36 +111,20 @@ export default function Room() {
           <div className="flex items-center space-x-4">
             <div className="flex items-center space-x-2">
               <span className="text-sm font-medium">Room Code:</span>
-              <div className="relative">
-                <button
-                  onClick={copyRoomCode}
-                  className={`px-3 py-1 rounded-lg font-mono text-lg font-bold ${
-                    darkMode ? 'bg-gray-700 hover:bg-gray-600' : 'bg-white hover:bg-gray-100'
-                  } transition-colors`}
-                >
-                  {params.roomId}
-                  <span className={`absolute -top-8 left-1/2 transform -translate-x-1/2 px-2 py-1 rounded bg-black text-white text-xs ${
-                    showCopiedTooltip ? 'opacity-100' : 'opacity-0'
-                  } transition-opacity`}>
-                    Copied!
-                  </span>
-                </button>
-              </div>
-            </div>
-            <div className="relative">
               <button
-                onClick={copyRoomLink}
-                className={`flex items-center space-x-1 px-3 py-1 rounded-lg text-sm ${
-                  darkMode ? 'bg-gray-700 hover:bg-gray-600' : 'bg-white hover:bg-gray-100'
-                } transition-colors`}
+                onClick={copyRoomCode}
+                className={`px-3 py-1 rounded-lg font-mono text-lg font-bold relative transition-all duration-200 ${ 
+                  darkMode ? 'bg-gray-700' : 'bg-white' 
+                } ${ 
+                  copiedState ? 'bg-green-500 text-white' : (darkMode ? 'hover:bg-gray-600' : 'hover:bg-gray-100')
+                }`}
               >
-                <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z" />
-                </svg>
-                <span>Share Link</span>
-                <span className={`absolute -top-8 left-1/2 transform -translate-x-1/2 px-2 py-1 rounded bg-black text-white text-xs ${
-                  showCopiedTooltip ? 'opacity-100' : 'opacity-0'
-                } transition-opacity`}>
+                {params.roomId}
+                <span 
+                  className={`absolute -bottom-7 left-1/2 transform -translate-x-1/2 px-2 py-1 rounded text-white text-xs transition-opacity duration-300 ${ 
+                    copiedState ? 'opacity-100 bg-green-600' : 'opacity-0' 
+                  }`}
+                >
                   Copied!
                 </span>
               </button>

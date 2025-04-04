@@ -12,7 +12,7 @@ const PlayerList: React.FC<PlayerListProps> = ({ darkMode }) => {
     players, 
     currentPlayer, 
     gameState, 
-    gameSettings, 
+    gameSettings,
     handleReady, 
     updateGameSettings,
     kickPlayer
@@ -24,7 +24,9 @@ const PlayerList: React.FC<PlayerListProps> = ({ darkMode }) => {
   // Sort players: party leader first, then current drawer, then by score
   const sortedPlayers = [...players].sort((a, b) => {
     if (a.isPartyLeader !== b.isPartyLeader) return a.isPartyLeader ? -1 : 1;
-    if (a.isDrawing !== b.isDrawing) return a.isDrawing ? -1 : 1;
+    const aDrawing = gameState?.status === 'playing' && gameState?.drawer?.id === a.id;
+    const bDrawing = gameState?.status === 'playing' && gameState?.drawer?.id === b.id;
+    if (aDrawing !== bDrawing) return aDrawing ? -1 : 1;
     return b.score - a.score;
   });
 
@@ -34,7 +36,8 @@ const PlayerList: React.FC<PlayerListProps> = ({ darkMode }) => {
   const minPlayers = 2;
   const canStartGame = players.length >= minPlayers && allPlayersReady;
   const isGameInProgress = gameState?.status === 'playing';
-  const isGameEnded = gameState?.status === 'ended';
+  const isGameWaiting = gameState?.status === 'waiting';
+  const isGameEndedOrWaiting = gameState?.status === 'ended' || gameState?.status === 'waiting';
 
   const handleKickPlayer = (playerName: string) => {
     if (amIPartyLeader && playerName !== currentPlayer?.name) {
@@ -50,7 +53,7 @@ const PlayerList: React.FC<PlayerListProps> = ({ darkMode }) => {
       <div className="mb-2 md:mb-4">
         <div className="flex justify-between items-center mb-2">
           <h3 className="text-lg font-semibold">Players</h3>
-          {!isGameInProgress && !isGameEnded && (
+          {!isGameInProgress && !isGameEndedOrWaiting && (
             <div className="flex items-center space-x-2">
               <span className={`text-sm ${
                 canStartGame ? 'text-green-500' : 
@@ -66,13 +69,16 @@ const PlayerList: React.FC<PlayerListProps> = ({ darkMode }) => {
           {isGameInProgress && (
             <div className="text-sm text-green-400">Game in progress</div>
           )}
-          {isGameEnded && (
+          {isGameWaiting && (
+            <div className="text-sm text-yellow-400">Waiting for players...</div>
+          )}
+          {gameState?.status === 'ended' && (
             <div className="text-sm text-purple-400">Game Ended</div>
           )}
         </div>
         <div className="flex items-center space-x-2 text-sm text-gray-400">
           <span>{players.length} player{players.length !== 1 ? 's' : ''} in room</span>
-          {!isGameInProgress && !isGameEnded && (
+          {!isGameInProgress && !isGameEndedOrWaiting && (
             <>
               <span>•</span>
               <span>{players.filter(p => p.isReady).length} ready</span>
@@ -84,7 +90,7 @@ const PlayerList: React.FC<PlayerListProps> = ({ darkMode }) => {
               <span>Round {gameState?.currentRound || 0}/{gameState?.maxRounds || 0}</span>
             </>
           )}
-          {isGameEnded && (
+          {gameState?.status === 'ended' && (
              <>
                <span>•</span>
                <span>Final Scores</span>
@@ -104,7 +110,7 @@ const PlayerList: React.FC<PlayerListProps> = ({ darkMode }) => {
       )}
 
       {/* Game Settings */}
-      {amIPartyLeader && !isGameInProgress && (
+      {amIPartyLeader && isGameEndedOrWaiting && (
         <div className="mb-4">
           <GameSettings
             settings={gameSettings}
@@ -115,7 +121,7 @@ const PlayerList: React.FC<PlayerListProps> = ({ darkMode }) => {
       )}
 
       {/* Ready Button - only show when not in a game */}
-      {!isGameInProgress && !isGameEnded && (
+      {!isGameInProgress && (
         <button
           onClick={handleReady}
           className={`mb-2 md:mb-4 w-full py-3 px-4 rounded-lg transition-all ${
@@ -165,73 +171,76 @@ const PlayerList: React.FC<PlayerListProps> = ({ darkMode }) => {
 
       {/* Player List */}
       <div className="flex-1 overflow-y-auto space-y-1 md:space-y-2 pr-1 md:pr-2 custom-scrollbar">
-        {sortedPlayers.map((player) => (
-          <div
-            key={player.id}
-            className={`flex items-center justify-between p-2 md:p-4 rounded-lg transition-all ${
-              player.name === currentPlayer?.name ? 'ring-2 ring-indigo-500 ring-opacity-50' : ''
-            } ${
-              player.isPartyLeader ? 'bg-indigo-500/20 border border-indigo-500/30' :
-              player.isDrawing ? 'bg-green-500/20 border border-green-500/30' : 
-              player.hasGuessedCorrectly && isGameInProgress ? 'bg-blue-500/20 border border-blue-500/30' :
-              isGameEnded ? 'bg-gray-500/20 border border-gray-500/30' :
-              'bg-gray-500/10 border border-gray-500/30'
-            } relative group hover:transform hover:scale-[1.02] hover:shadow-lg transition-all duration-200`}
-          >
-            <div className="flex items-center space-x-3">
-              <div className={`w-2 h-2 rounded-full ${
-                isGameEnded ? 'bg-purple-500' :
-                isGameInProgress 
-                  ? (player.hasGuessedCorrectly ? 'bg-blue-500' : 'bg-gray-500') 
-                  : (player.isReady ? 'bg-green-500' : 'bg-yellow-500')
-              }`} />
-              <div>
-                <div className="flex items-center space-x-2">
-                  <span className="font-medium text-sm md:text-base">{player.name}</span>
-                  {player.isPartyLeader && (
-                    <span className="text-indigo-400 bg-indigo-500/20 px-2 py-0.5 rounded-full text-xs" title="Party Leader">👑 Leader</span>
-                  )}
-                  {player.isDrawing && isGameInProgress && (
-                    <span className="text-green-400 animate-bounce" title="Currently Drawing">✏️</span>
-                  )}
-                  {player.name === currentPlayer?.name && (
-                    <span className="text-xs bg-indigo-500/20 text-indigo-300 px-2 py-0.5 rounded-full">You</span>
-                  )}
-                </div>
-                <div className="flex items-center space-x-2 text-sm text-gray-400">
-                  {!isGameInProgress && !isGameEnded && (
-                    <span>{player.isReady ? 'Ready' : 'Not Ready'}</span>
-                  )}
-                  {isGameInProgress && player.hasGuessedCorrectly && (
-                    <span className="text-blue-400">Guessed correctly!</span>
-                  )}
-                  {isGameInProgress && player.isDrawing && (
-                    <span className="text-green-400">Drawing now</span>
-                  )}
+        {sortedPlayers.map((player) => {
+          console.log(`CLIENT DEBUG: PlayerList mapping - Player ID: ${player.id}, CurrentPlayer ID: ${currentPlayerId}, Is match: ${player.id === currentPlayerId}`);
+          
+          return (
+            <div
+              key={player.id}
+              className={`flex items-center justify-between p-2 md:p-4 rounded-lg transition-all ${
+                player.id === currentPlayerId ? 'ring-2 ring-indigo-500 ring-opacity-50' : ''
+              } ${
+                player.isPartyLeader ? 'bg-indigo-500/20 border border-indigo-500/30' :
+                (gameState?.status === 'playing' && gameState?.drawer?.id === player.id) ? 'bg-green-500/20 border border-green-500/30' : 
+                player.hasGuessedCorrectly && isGameInProgress ? 'bg-blue-500/20 border border-blue-500/30' :
+                isGameEndedOrWaiting ? 'bg-gray-500/20 border border-gray-500/30' :
+                'bg-gray-500/10 border border-gray-500/30'
+              } relative group hover:transform hover:scale-[1.02] hover:shadow-lg transition-all duration-200`}
+            >
+              <div className="flex items-center space-x-3">
+                <div className={`w-2 h-2 rounded-full ${
+                  gameState?.status === 'playing' 
+                    ? (player.hasGuessedCorrectly ? 'bg-blue-500' : (gameState?.status === 'playing' && gameState?.drawer?.id === player.id ? 'bg-green-500' : 'bg-gray-500')) 
+                    : (player.isReady ? 'bg-green-500' : 'bg-yellow-500')
+                }`} />
+                <div>
+                  <div className="flex items-center space-x-2">
+                    <span className="font-medium text-sm md:text-base">{player.name}</span>
+                    {player.isPartyLeader && (
+                      <span className="text-indigo-400 bg-indigo-500/20 px-2 py-0.5 rounded-full text-xs" title="Party Leader">👑 Leader</span>
+                    )}
+                    {(gameState?.status === 'playing' && gameState?.drawer?.id === player.id) && isGameInProgress && (
+                      <span className="text-green-400 animate-bounce" title="Currently Drawing">✏️</span>
+                    )}
+                    {player.id === currentPlayerId && (
+                      <span className="text-xs bg-indigo-500/20 text-indigo-300 px-2 py-0.5 rounded-full">You</span>
+                    )}
+                  </div>
+                  <div className="flex items-center space-x-2 text-sm text-gray-400">
+                    {!isGameInProgress && !isGameEndedOrWaiting && (
+                      <span>{player.isReady ? 'Ready' : 'Not Ready'}</span>
+                    )}
+                    {isGameInProgress && player.hasGuessedCorrectly && (
+                      <span className="text-blue-400">Guessed correctly!</span>
+                    )}
+                    {isGameInProgress && (gameState?.status === 'playing' && gameState?.drawer?.id === player.id) && (
+                      <span className="text-green-400">Drawing now</span>
+                    )}
+                  </div>
                 </div>
               </div>
-            </div>
-            <div className="flex items-center space-x-3">
-              <div className="text-right">
-                <div className="font-bold text-base md:text-lg">{player.score}</div>
-                <div className="text-xs text-gray-400">points</div>
+              <div className="flex items-center space-x-3">
+                <div className="text-right">
+                  <div className="font-bold text-base md:text-lg">{player.score}</div>
+                  <div className="text-xs text-gray-400">points</div>
+                </div>
+                
+                {/* Kick button - Show if I'm the party leader and this isn't me (Allow mid-game) */}
+                {amIPartyLeader && player.id !== currentPlayerId && (
+                  <button
+                    onClick={() => handleKickPlayer(player.name)}
+                    className="p-1.5 rounded-full hover:bg-red-500/20 text-red-400 transition-colors"
+                    title={`Kick ${player.name}`}
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" />
+                    </svg>
+                  </button>
+                )}
               </div>
-              
-              {/* Kick button - only show if I'm the party leader and this isn't me */}
-              {amIPartyLeader && player.id !== currentPlayerId && !isGameInProgress && (
-                <button
-                  onClick={() => handleKickPlayer(player.name)}
-                  className="p-1.5 rounded-full hover:bg-red-500/20 text-red-400 transition-colors"
-                  title={`Kick ${player.name}`}
-                >
-                  <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" />
-                  </svg>
-                </button>
-              )}
             </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );
