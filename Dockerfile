@@ -30,10 +30,11 @@ COPY --from=builder /app/websocket-server.js ./
 # Set environment variables (can be overridden)
 ENV NODE_ENV=production
 ENV PORT=3000
+ENV WS_PORT=3000
 # Ensure servers bind to 0.0.0.0 inside the container
 ENV HOST=0.0.0.0 
 
-# Expose the new port for the integrated server
+# Expose port 3000 for both HTTP and WebSocket traffic
 EXPOSE 3000
 
 # Add healthcheck (optional but recommended)

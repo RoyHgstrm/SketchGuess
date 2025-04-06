@@ -53,6 +53,7 @@ app.use(express.static('public', { maxAge: '1h' }));
 const server = http.createServer(app);
 
 // Create WebSocket server attached to the HTTP server
+// This is the critical part - the WebSocket server shares the same HTTP server instance
 const wss = new WebSocketServer({ server });
 
 // Initialize only the background tasks (heartbeat, cleanup) from websocket-server
@@ -198,7 +199,7 @@ wss.on('connection', (ws, req) => {
 });
 
 // Start server
-const PORT = process.env.PORT; // Use the environment variable directly
+const PORT = process.env.PORT || 3000; // Use the environment variable or default to 3000
 if (!PORT) {
   console.error("FATAL ERROR: PORT environment variable is not set.");
   process.exit(1); // Exit if the PORT variable is missing
@@ -208,6 +209,7 @@ const HOST = process.env.HOST || '0.0.0.0';
 
 server.listen(Number(PORT), HOST, () => { // Ensure PORT is treated as a number
   console.log(`Integrated server running on ${HOST}:${PORT}`);
+  console.log(`WebSocket server is running on the same port (${PORT})`);
   
   // Handle graceful shutdown
   process.on('SIGTERM', () => {

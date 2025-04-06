@@ -128,27 +128,21 @@ export const WebSocketContext = createContext<WebSocketContextType>({
 const getWebSocketURL = (roomId: string) => {
   try {
     // --- DEVELOPMENT --- 
-    // In development (outside Docker), directly target the WS_PORT (e.g., 8080)
     if (process.env.NODE_ENV === 'development' && typeof window !== 'undefined') {
-      const devWsPort = process.env.WS_PORT || '8080'; // Use WS_PORT from env or default
-      const devUrl = `ws://localhost:${devWsPort}`;
-      console.log("Using Development WebSocket URL:", devUrl);
-      return `${devUrl}?roomId=${encodeURIComponent(roomId)}`;
+      // Use the window location's hostname and port 3000 (since both HTTP and WS are on same port now)
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const host = window.location.hostname;
+      const url = `${protocol}//${host}:3000`;
+      console.log("Using WebSocket URL from window location:", url);
+      return `${url}?roomId=${encodeURIComponent(roomId)}`;
     }
 
     // --- PRODUCTION / OTHER --- 
-    // First try to get the WebSocket URL from environment variable (for Docker builds)
-    const wsUrlEnv = process.env.WS_URL; // Note: process.env might not be reliable client-side
-    if (wsUrlEnv) {
-      console.log("Using WebSocket URL from environment (WS_URL):", wsUrlEnv);
-      return `${wsUrlEnv}?roomId=${encodeURIComponent(roomId)}`;
-    }
-
-    // If no environment variable, derive from current window location (for integrated server in prod)
+    // For production, always derive from current window location
     if (typeof window !== 'undefined') {
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
       const host = window.location.hostname;
-      // Use the *same* port as the web page is served from in production
+      // Use the same port as the web page is served from
       const port = window.location.port;
       const url = `${protocol}//${host}${port ? `:${port}` : ''}`;
       console.log("Using WebSocket URL derived from window location:", url);
@@ -156,7 +150,7 @@ const getWebSocketURL = (roomId: string) => {
     }
 
     // Fallback (should ideally not be reached in prod)
-    console.warn("WebSocket URL determination falling back to localhost:3000");
+    console.warn("WebSocket URL determination falling back to default");
     return `ws://localhost:3000?roomId=${encodeURIComponent(roomId)}`;
   } catch (error) {
     console.error("Error determining WebSocket URL:", error);
