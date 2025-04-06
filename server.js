@@ -198,10 +198,15 @@ wss.on('connection', (ws, req) => {
 });
 
 // Start server
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT; // Use the environment variable directly
+if (!PORT) {
+  console.error("FATAL ERROR: PORT environment variable is not set.");
+  process.exit(1); // Exit if the PORT variable is missing
+}
+
 const HOST = process.env.HOST || '0.0.0.0';
 
-server.listen(PORT, HOST, () => {
+server.listen(Number(PORT), HOST, () => { // Ensure PORT is treated as a number
   console.log(`Integrated server running on ${HOST}:${PORT}`);
   
   // Handle graceful shutdown

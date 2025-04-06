@@ -33,7 +33,7 @@ ENV PORT=3000
 # Ensure servers bind to 0.0.0.0 inside the container
 ENV HOST=0.0.0.0 
 
-# Expose the single port for the integrated server
+# Expose the new port for the integrated server
 EXPOSE 3000
 
 # Add healthcheck (optional but recommended)

@@ -1,0 +1,18 @@
+{
+    "watch": ["websocket-server.js"],
+    "ext": "js",
+    "ignore": [
+      ".git",
+      "node_modules/**/node_modules",
+      "app/**",
+      "build/**",
+      "public/**",
+      "*.json",
+      "*.md",
+      "Dockerfile*",
+      ".dockerignore",
+      ".env*",
+      ".vscode/**"
+    ],
+    "delay": "1500"
+  }

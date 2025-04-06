@@ -127,30 +127,40 @@ export const WebSocketContext = createContext<WebSocketContextType>({
 // Update the getWebSocketURL function to better handle different environments
 const getWebSocketURL = (roomId: string) => {
   try {
-    // First try to get the WebSocket URL from environment variable
-    const wsUrl = process.env.WS_URL;
-    if (wsUrl) {
-      console.log("Using WebSocket URL from environment:", wsUrl);
-      return `${wsUrl}?roomId=${encodeURIComponent(roomId)}`;
+    // --- DEVELOPMENT --- 
+    // In development (outside Docker), directly target the WS_PORT (e.g., 8080)
+    if (process.env.NODE_ENV === 'development' && typeof window !== 'undefined') {
+      const devWsPort = process.env.WS_PORT || '8080'; // Use WS_PORT from env or default
+      const devUrl = `ws://localhost:${devWsPort}`;
+      console.log("Using Development WebSocket URL:", devUrl);
+      return `${devUrl}?roomId=${encodeURIComponent(roomId)}`;
     }
 
-    // If no environment variable, derive from current window location
-    // Use the same host and port as the current page
+    // --- PRODUCTION / OTHER --- 
+    // First try to get the WebSocket URL from environment variable (for Docker builds)
+    const wsUrlEnv = process.env.WS_URL; // Note: process.env might not be reliable client-side
+    if (wsUrlEnv) {
+      console.log("Using WebSocket URL from environment (WS_URL):", wsUrlEnv);
+      return `${wsUrlEnv}?roomId=${encodeURIComponent(roomId)}`;
+    }
+
+    // If no environment variable, derive from current window location (for integrated server in prod)
     if (typeof window !== 'undefined') {
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
       const host = window.location.hostname;
-      const port = window.location.port || (window.location.protocol === 'https:' ? '443' : '80');
-      const url = `${protocol}//${host}${port === '80' || port === '443' ? '' : `:${port}`}`;
-      console.log("Using WebSocket URL from window location:", url);
+      // Use the *same* port as the web page is served from in production
+      const port = window.location.port;
+      const url = `${protocol}//${host}${port ? `:${port}` : ''}`;
+      console.log("Using WebSocket URL derived from window location:", url);
       return `${url}?roomId=${encodeURIComponent(roomId)}`;
     }
 
-    // Fallback to localhost
-    console.log("Using fallback WebSocket URL: ws://localhost:3000");
+    // Fallback (should ideally not be reached in prod)
+    console.warn("WebSocket URL determination falling back to localhost:3000");
     return `ws://localhost:3000?roomId=${encodeURIComponent(roomId)}`;
   } catch (error) {
-    console.error("Error getting WebSocket URL:", error);
-    // Fallback to localhost
+    console.error("Error determining WebSocket URL:", error);
+    // Critical Fallback
     return `ws://localhost:3000?roomId=${encodeURIComponent(roomId)}`;
   }
 };

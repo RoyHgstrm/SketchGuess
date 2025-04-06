@@ -9,10 +9,12 @@
     "start": "remix-serve build/index.js",
     "websocket": "node websocket-server.js",
     "websocket:prod": "NODE_ENV=production node websocket-server.js",
+    "websocket:dev": "nodemon websocket-server.js",
     "start:prod": "NODE_ENV=production remix-serve build/index.js",
     "start:docker": "NODE_ENV=production node server.js",
     "start:all": "concurrently \"npm run start\" \"npm run websocket\"",
     "start:all:prod": "concurrently \"npm run start:prod\" \"npm run websocket:prod\"",
+    "dev:all": "concurrently \"npm:dev\" \"npm:websocket:dev\"",
     "typecheck": "tsc"
   },
   "dependencies": {
@@ -38,6 +40,7 @@
     "@types/react": "^18.2.20",
     "@types/react-dom": "^18.2.7",
     "@types/ws": "^8.5.10",
+    "nodemon": "^3.1.4",
     "postcss": "^8.4.35",
     "postcss-cli": "^11.0.0",
     "tailwindcss": "^3.3.6",

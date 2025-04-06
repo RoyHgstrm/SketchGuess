@@ -14,7 +14,8 @@ export const LEADERBOARD_FILE = path.join(__dirname, 'leaderboard.json');
 // Define Constants
 const HEARTBEAT_INTERVAL = 30000; // 30 seconds
 const MAX_USERNAME_LENGTH = 20;
-const MAX_CHAT_LENGTH = 150;
+const MAX_CHAT_LENGTH = 50; // Changed from 150 to 50
+const MIN_MESSAGE_INTERVAL_MS = 1000; // 1 second between messages
 
 // Default word list
 export const DEFAULT_WORDS = [
@@ -662,7 +663,8 @@ export function handleJoin(ws, message, rooms, totalConnections) {
       lastActive: Date.now(),
       ipAddress: ipAddress, // Store the IP
       guessTime: null,
-      correctGuess: false
+      correctGuess: false,
+      lastMessageTime: 0 // Initialize last message time
   };
 
   // Add player to room
@@ -847,15 +849,25 @@ export function handleGuess(ws, data, rooms) {
   if (!player || player.isDrawing) return;
   
   const guess = (data.guess || '').trim();
+  const now = Date.now();
 
-  // --- Guess Length Validation ---
+  // --- Spam Protection Check ---
+  if (now - (player.lastMessageTime || 0) < MIN_MESSAGE_INTERVAL_MS) {
+      safeSend(ws, { type: "error", content: "You're sending messages too quickly. Please wait a moment.", code: "SPAM_DETECTED" });
+      return;
+  }
+  
+  // --- Length Validation ---
   if (guess.length > MAX_CHAT_LENGTH) {
     safeSend(ws, { type: "error", content: `Guess exceeds maximum length of ${MAX_CHAT_LENGTH} characters.` });
-    return; // Do not process or broadcast
+    return;
   }
   if (guess.length === 0) {
       return; // Ignore empty guesses
   }
+
+  // --- Process Valid Guess ---
+  player.lastMessageTime = now; // Update last message time *after* validation
   
   console.log(`Player ${player.name} guessed: ${guess}`);
   
@@ -934,32 +946,34 @@ export function handleChat(ws, data, rooms) {
     if (!room || !player) return;
 
     const messageContent = (data.content || '').trim();
+    const now = Date.now();
 
-    // --- Chat Length Validation ---
+    // --- Spam Protection Check ---
+    if (now - (player.lastMessageTime || 0) < MIN_MESSAGE_INTERVAL_MS) {
+        safeSend(ws, { type: "error", content: "You're sending messages too quickly. Please wait a moment.", code: "SPAM_DETECTED" });
+        return;
+    }
+
+    // --- Length Validation ---
     if (messageContent.length > MAX_CHAT_LENGTH) {
         safeSend(ws, { type: "error", content: `Chat message exceeds maximum length of ${MAX_CHAT_LENGTH} characters.` });
-        return; // Do not process or broadcast
+        return;
     }
     if (messageContent.length === 0) {
-        return; // Ignore empty messages
+        return;
     }
 
-    // Prevent drawer from chatting during the game (optional, depends on game rules)
-    // if (room.status === 'playing' && player.isDrawing) {
-    //     // Optionally send an error back to the drawer
-    //     // ws.send(JSON.stringify({ type: 'error', content: 'You cannot chat while drawing.' }));
-    //     // console.log(`[Room ${ws.roomId}] Drawer ${player.name} tried to chat.`);
-    //     // return;
-    // }
+    // --- Process Valid Chat ---
+    player.lastMessageTime = now; // Update last message time *after* validation
 
     console.log(`[Room ${ws.roomId}] Chat from ${player.name}: ${messageContent}`);
 
     broadcastToRoom(room, {
         id: generateUniquePlayerId(),
-        type: 'chat', // Explicitly set type to 'chat'
+        type: 'chat', 
         playerName: player.name,
         content: messageContent,
-        timestamp: Date.now()
+        timestamp: now
     });
 }
 

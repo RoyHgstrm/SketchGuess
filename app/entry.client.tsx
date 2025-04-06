@@ -15,36 +15,8 @@ window.addEventListener("error", (event) => {
   // Prevent the app from crashing by handling errors gracefully
   event.preventDefault();
   
-  // Optionally show a user-friendly error message
-  if (!document.getElementById("global-error-banner")) {
-    const errorBanner = document.createElement("div");
-    errorBanner.id = "global-error-banner";
-    errorBanner.style.position = "fixed";
-    errorBanner.style.bottom = "0";
-    errorBanner.style.left = "0";
-    errorBanner.style.right = "0";
-    errorBanner.style.padding = "10px";
-    errorBanner.style.backgroundColor = "rgba(220, 38, 38, 0.9)";
-    errorBanner.style.color = "white";
-    errorBanner.style.textAlign = "center";
-    errorBanner.style.zIndex = "9999";
-    errorBanner.innerHTML = `
-      <p>Something went wrong. <button id="reload-btn" style="text-decoration: underline; margin-left: 5px;">Reload</button></p>
-    `;
-    document.body.appendChild(errorBanner);
-    
-    document.getElementById("reload-btn")?.addEventListener("click", () => {
-      window.location.reload();
-    });
-    
-    // Auto-remove after 10 seconds
-    setTimeout(() => {
-      const banner = document.getElementById("global-error-banner");
-      if (banner && banner.parentNode) {
-        banner.parentNode.removeChild(banner);
-      }
-    }, 10000);
-  }
+  // Log the error but don't show any UI to the user
+  console.error("An error occurred:", event.error);
 });
 
 // Handle unhandled promise rejections

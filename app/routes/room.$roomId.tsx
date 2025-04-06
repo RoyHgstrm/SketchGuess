@@ -135,24 +135,26 @@ export default function Room() {
 
   // Effect to control leaderboard visibility based on context
   useEffect(() => {
+    // ONLY set to TRUE when the game ends and leaderboard data is available
     if (leaderboard && gameState?.status === 'ended') {
+      console.log("Game ended, showing leaderboard.");
       setShowLeaderboard(true);
-    } else {
-      // Hide leaderboard if game is not ended or no leaderboard data
-      setShowLeaderboard(false);
     }
+    // DO NOT set to false here when status changes back to waiting.
+    // Hiding will be handled by handleCloseLeaderboard.
   }, [leaderboard, gameState?.status]);
 
   // Define the handler to close the leaderboard and potentially start new game
   const handleCloseLeaderboard = useCallback(() => {
-    setShowLeaderboard(false); // Always close the leaderboard UI
+    console.log("handleCloseLeaderboard called.");
+    setShowLeaderboard(false); // Close the leaderboard UI locally for this user
 
     // If the current player is the leader, also trigger the start new game request
     if (currentPlayer?.isPartyLeader) {
       console.log("Leader clicked Continue on leaderboard, triggering startNewGame");
-      startNewGame(); // Call the context function to send the request
+      startNewGame(); // Call the context function to send the request to reset the server state
     }
-  }, [currentPlayer, startNewGame]); // Add dependencies
+  }, [currentPlayer, startNewGame]); // Dependencies remain the same
 
   return (
     <WebSocketErrorBoundary>
@@ -242,7 +244,7 @@ export default function Room() {
         <GameLeaderboard 
           players={leaderboard} 
           darkMode={darkMode}
-          onClose={handleCloseLeaderboard} // Use the updated handler
+          onClose={handleCloseLeaderboard} // Still uses the same handler
         />
       )}
     </WebSocketErrorBoundary>
