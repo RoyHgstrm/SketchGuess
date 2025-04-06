@@ -2,6 +2,8 @@
 
 SketchGuess is an online multiplayer game where players take turns drawing words while others try to guess them correctly. Built with modern web technologies, it provides a fun and interactive experience.
 ![image](https://github.com/user-attachments/assets/ab9b3d61-7c16-4b6f-bd92-9eb59558ce50)
+![image](https://github.com/user-attachments/assets/9380c8b9-83a4-40bf-b2bc-e8b08ee38981)
+
 
 ## Features
 
