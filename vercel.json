@@ -3,8 +3,8 @@
   "builds": [
     { "src": "server-adapter.js", "use": "@vercel/node" }
   ],
-  "routes": [
-    { "src": "/(.*)", "dest": "/server-adapter.js" }
+  "rewrites": [
+    { "source": "/(.*)", "destination": "/server-adapter.js" }
   ],
   "headers": [
     {
