@@ -217,34 +217,96 @@ const getRequestHandler = async (req, res, next) => {
       }
     }
     
-    // Create Remix handler
-    const remixHandler = createRequestHandler({
+    // Implement custom handler that safely handles Response objects without statusText
+    const customRequestHandler = (remixOptions) => {
+      return async (req, res, next) => {
+        try {
+          const handleRequest = createRequestHandler(remixOptions);
+          
+          // Store original response methods to patch them
+          const originalEnd = res.end;
+          const originalSetHeader = res.setHeader;
+          const originalStatus = res.status;
+          
+          // Override methods to ensure we don't crash on null statusText or undefined values
+          res.setHeader = function(name, value) {
+            if (name && value !== undefined) {
+              return originalSetHeader.call(this, name, value);
+            }
+            return this;
+          };
+          
+          res.status = function(code) {
+            if (code && !isNaN(code)) {
+              return originalStatus.call(this, code);
+            }
+            return this;
+          };
+          
+          res.end = function(data, encoding) {
+            try {
+              return originalEnd.call(this, data, encoding);
+            } catch (endError) {
+              console.error('Error in res.end:', endError);
+              if (!res.headersSent) {
+                res.status(500).send('Internal Server Error');
+              }
+            }
+          };
+          
+          // Now call the actual Remix handler with our enhanced response
+          return await handleRequest(req, res, next);
+        } catch (error) {
+          console.error('Custom handler error:', error);
+          
+          // If this is a Response object with a missing statusText
+          if (error && typeof error.status === 'number' && !error.statusText) {
+            console.log(`Fixing Response without statusText (status ${error.status})`);
+            
+            // Don't try to set headers if they're already sent
+            if (!res.headersSent) {
+              try {
+                // Set status code
+                res.status(error.status || 500);
+                
+                // Set headers if they exist
+                if (error.headers) {
+                  for (const [key, value] of Object.entries(error.headers)) {
+                    if (value !== undefined) {
+                      res.setHeader(key, value);
+                    }
+                  }
+                }
+                
+                // Send the response body or a default message
+                const body = error.body || `Error ${error.status}`;
+                return res.send(body);
+              } catch (responseError) {
+                console.error('Error creating response:', responseError);
+                return res.status(500).send('Internal Server Error');
+              }
+            } else {
+              console.log('Headers already sent, cannot fix response');
+            }
+          }
+          
+          // For other errors, pass to next error handler
+          return next(error);
+        }
+      };
+    };
+    
+    // Use our custom handler implementation
+    return customRequestHandler({
       build,
       mode: process.env.NODE_ENV || 'production',
-    });
+    })(req, res, next);
     
-    // Call handler with additional error handling for statusText issues
-    return remixHandler(req, res, next).catch(error => {
-      console.error('Remix handler error:', error);
-      
-      // If the error looks like a Response object without statusText
-      if (error && typeof error.status === 'number' && !error.statusText) {
-        // Create a proper Response object with statusText
-        const statusText = getStatusText(error.status);
-        const newResponse = new Response(error.body || '', {
-          status: error.status,
-          statusText: statusText,
-          headers: error.headers
-        });
-        return newResponse;
-      }
-      
-      // Otherwise rethrow the error
-      throw error;
-    });
   } catch (error) {
     console.error('Error handling request:', error);
-    res.status(500).send('Internal Server Error');
+    if (!res.headersSent) {
+      res.status(500).send('Internal Server Error');
+    }
   }
 };
 

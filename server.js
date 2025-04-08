@@ -189,86 +189,98 @@ const getRequestHandler = async (req, res, next) => {
   try {
     const build = await getBuild();
     
-    // Create a custom handler that wraps the Remix handler to fix status text issues
-    const remixHandler = createRequestHandler({
+    // Instead of using createRequestHandler directly, implement a custom version
+    // that safely handles Response objects without statusText
+    const customRequestHandler = (remixOptions) => {
+      return async (req, res, next) => {
+        try {
+          const handleRequest = createRequestHandler(remixOptions);
+          
+          // Make a custom implementation of Express's response
+          const originalEnd = res.end;
+          const originalSetHeader = res.setHeader;
+          const originalStatus = res.status;
+          
+          // Override methods to ensure we don't crash on null statusText
+          res.setHeader = function(name, value) {
+            if (name && value !== undefined) {
+              return originalSetHeader.call(this, name, value);
+            }
+            return this;
+          };
+          
+          res.status = function(code) {
+            if (code && !isNaN(code)) {
+              return originalStatus.call(this, code);
+            }
+            return this;
+          };
+          
+          res.end = function(data, encoding) {
+            try {
+              return originalEnd.call(this, data, encoding);
+            } catch (endError) {
+              console.error('Error in res.end:', endError);
+              if (!res.headersSent) {
+                res.status(500).send('Internal Server Error');
+              }
+            }
+          };
+          
+          // Now call the actual Remix handler with our enhanced response
+          return await handleRequest(req, res, next);
+        } catch (error) {
+          console.error('Custom handler error:', error);
+          
+          // If this is a Response object with a missing statusText
+          if (error && typeof error.status === 'number' && !error.statusText) {
+            console.log(`Fixing Response without statusText (status ${error.status})`);
+            
+            // Don't try to set headers if they're already sent
+            if (!res.headersSent) {
+              try {
+                // Set status code
+                res.status(error.status || 500);
+                
+                // Set headers if they exist
+                if (error.headers) {
+                  for (const [key, value] of Object.entries(error.headers)) {
+                    if (value !== undefined) {
+                      res.setHeader(key, value);
+                    }
+                  }
+                }
+                
+                // Send the response body or a default message
+                const body = error.body || `Error ${error.status}`;
+                return res.send(body);
+              } catch (responseError) {
+                console.error('Error creating response:', responseError);
+                return res.status(500).send('Internal Server Error');
+              }
+            } else {
+              console.log('Headers already sent, cannot fix response');
+            }
+          }
+          
+          // For other errors, pass to next error handler
+          return next(error);
+        }
+      };
+    };
+    
+    // Use our custom handler implementation
+    return customRequestHandler({
       build,
       mode: process.env.NODE_ENV || 'production'
-    });
-    
-    // Call the handler and catch potential Response object issues
-    return remixHandler(req, res, next).catch(error => {
-      console.error('Remix handler error:', error);
-      
-      // If the error looks like a Response object without statusText
-      if (error && typeof error.status === 'number' && !error.statusText) {
-        // Create a proper Response object with statusText
-        const statusText = getStatusText(error.status);
-        const newResponse = new Response(error.body || '', {
-          status: error.status,
-          statusText: statusText,
-          headers: error.headers
-        });
-        return newResponse;
-      }
-      
-      // Otherwise rethrow the error
-      throw error;
-    });
+    })(req, res, next);
   } catch (error) {
     console.error('Error handling request:', error);
-    res.status(500).send('Internal Server Error');
+    if (!res.headersSent) {
+      res.status(500).send('Internal Server Error');
+    }
   }
 };
-
-// Helper function to get status text for a status code
-function getStatusText(status) {
-  const statusTexts = {
-    100: 'Continue',
-    101: 'Switching Protocols',
-    200: 'OK',
-    201: 'Created',
-    202: 'Accepted',
-    203: 'Non-Authoritative Information',
-    204: 'No Content',
-    205: 'Reset Content',
-    206: 'Partial Content',
-    300: 'Multiple Choices',
-    301: 'Moved Permanently',
-    302: 'Found',
-    303: 'See Other',
-    304: 'Not Modified',
-    305: 'Use Proxy',
-    307: 'Temporary Redirect',
-    400: 'Bad Request',
-    401: 'Unauthorized',
-    402: 'Payment Required',
-    403: 'Forbidden',
-    404: 'Not Found',
-    405: 'Method Not Allowed',
-    406: 'Not Acceptable',
-    407: 'Proxy Authentication Required',
-    408: 'Request Timeout',
-    409: 'Conflict',
-    410: 'Gone',
-    411: 'Length Required',
-    412: 'Precondition Failed',
-    413: 'Payload Too Large',
-    414: 'URI Too Long',
-    415: 'Unsupported Media Type',
-    416: 'Range Not Satisfiable',
-    417: 'Expectation Failed',
-    418: "I'm a teapot",
-    426: 'Upgrade Required',
-    500: 'Internal Server Error',
-    501: 'Not Implemented',
-    502: 'Bad Gateway',
-    503: 'Service Unavailable',
-    504: 'Gateway Timeout',
-    505: 'HTTP Version Not Supported'
-  };
-  
-  return statusTexts[status] || 'Unknown Status';
-}
 
 // Create HTTP server
 const server = http.createServer(app);
