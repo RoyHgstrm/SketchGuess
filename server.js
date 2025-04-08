@@ -193,61 +193,92 @@ const getRequestHandler = async (req, res, next) => {
       return res.status(500).send('Build not found');
     }
 
-    // Create a custom request handler that bypasses the Remix Express adapter
-    const handleRequest = async (request) => {
+    // Use Remix's createRequestHandler, but handle the response directly
+    // by manipulating the Express response before/after
+    const remix = createRequestHandler({
+      build,
+      mode: process.env.NODE_ENV || 'production'
+    });
+
+    // Capture the original response methods so we can restore them
+    const originalEnd = res.end;
+    const originalSetHeader = res.setHeader;
+    const originalStatus = res.status;
+    
+    // Override Express response methods to ensure they handle null/undefined
+    res.setHeader = function(name, value) {
+      if (name && value !== undefined) {
+        return originalSetHeader.call(this, name, value);
+      }
+      return this;
+    };
+    
+    res.status = function(code) {
+      if (code && !isNaN(code)) {
+        return originalStatus.call(this, code);
+      }
+      return this;
+    };
+    
+    res.end = function(data, encoding) {
       try {
-        const response = await build.handleRequest(request);
-        
-        // Handle the response directly
-        if (!response) {
-          console.error('No response from Remix handler');
-          return new Response('Internal Server Error', { status: 500 });
+        return originalEnd.call(this, data, encoding);
+      } catch (endError) {
+        console.error('Error in res.end:', endError);
+        if (!res.headersSent) {
+          originalStatus.call(this, 500);
+          originalEnd.call(this, 'Internal Server Error');
         }
-
-        // Ensure we have a valid Response object
-        if (!(response instanceof Response)) {
-          console.error('Invalid response type:', typeof response);
-          return new Response('Internal Server Error', { status: 500 });
-        }
-
-        return response;
-      } catch (error) {
-        console.error('Error handling request:', error);
-        return new Response('Internal Server Error', { status: 500 });
       }
     };
 
-    // Convert Express request to Fetch API request
-    const url = new URL(req.url, `http://${req.headers.host}`);
-    const headers = new Headers();
-    Object.entries(req.headers).forEach(([key, value]) => {
-      if (value) headers.set(key, value.toString());
-    });
-
-    const request = new Request(url, {
-      method: req.method,
-      headers,
-      body: req.method !== 'GET' && req.method !== 'HEAD' ? req : undefined,
-    });
-
-    // Handle the request and send the response
-    const response = await handleRequest(request);
-    
-    // Set response headers
-    response.headers.forEach((value, key) => {
-      res.setHeader(key, value);
-    });
-
-    // Set status code
-    res.status(response.status);
-
-    // Send the response body
-    const body = await response.text();
-    res.send(body);
-
+    // Try to execute the Remix handler with our patched response
+    try {
+      await remix(req, res, (err) => {
+        if (err) {
+          console.error('Error from Remix handler:', err);
+          if (!res.headersSent) {
+            res.status(500).send('Internal Server Error');
+          }
+          return;
+        }
+        next();
+      });
+    } catch (handlerError) {
+      console.error('Caught error from Remix handler execution:', handlerError);
+      
+      // If it has a status property, it might be a Response-like object
+      if (handlerError && typeof handlerError.status === 'number') {
+        // Don't try to modify headers if they're already sent
+        if (!res.headersSent) {
+          try {
+            res.status(handlerError.status || 500);
+            if (handlerError.headers) {
+              Object.entries(handlerError.headers).forEach(([key, value]) => {
+                if (value !== undefined) {
+                  res.setHeader(key, value);
+                }
+              });
+            }
+            const body = handlerError.body || `Error ${handlerError.status}`;
+            res.send(body);
+            return;
+          } catch (responseError) {
+            console.error('Error creating error response:', responseError);
+          }
+        }
+      }
+      
+      // Default error handling if all else fails
+      if (!res.headersSent) {
+        res.status(500).send('Internal Server Error');
+      }
+    }
   } catch (error) {
     console.error('Error in request handler:', error);
-    res.status(500).send('Internal Server Error');
+    if (!res.headersSent) {
+      res.status(500).send('Internal Server Error');
+    }
   }
 };
 

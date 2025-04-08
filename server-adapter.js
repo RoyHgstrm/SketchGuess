@@ -217,91 +217,86 @@ const getRequestHandler = async (req, res, next) => {
       }
     }
     
-    // Implement custom handler that safely handles Response objects without statusText
-    const customRequestHandler = (remixOptions) => {
-      return async (req, res, next) => {
-        try {
-          const handleRequest = createRequestHandler(remixOptions);
-          
-          // Store original response methods to patch them
-          const originalEnd = res.end;
-          const originalSetHeader = res.setHeader;
-          const originalStatus = res.status;
-          
-          // Override methods to ensure we don't crash on null statusText or undefined values
-          res.setHeader = function(name, value) {
-            if (name && value !== undefined) {
-              return originalSetHeader.call(this, name, value);
-            }
-            return this;
-          };
-          
-          res.status = function(code) {
-            if (code && !isNaN(code)) {
-              return originalStatus.call(this, code);
-            }
-            return this;
-          };
-          
-          res.end = function(data, encoding) {
-            try {
-              return originalEnd.call(this, data, encoding);
-            } catch (endError) {
-              console.error('Error in res.end:', endError);
-              if (!res.headersSent) {
-                res.status(500).send('Internal Server Error');
-              }
-            }
-          };
-          
-          // Now call the actual Remix handler with our enhanced response
-          return await handleRequest(req, res, next);
-        } catch (error) {
-          console.error('Custom handler error:', error);
-          
-          // If this is a Response object with a missing statusText
-          if (error && typeof error.status === 'number' && !error.statusText) {
-            console.log(`Fixing Response without statusText (status ${error.status})`);
-            
-            // Don't try to set headers if they're already sent
-            if (!res.headersSent) {
-              try {
-                // Set status code
-                res.status(error.status || 500);
-                
-                // Set headers if they exist
-                if (error.headers) {
-                  for (const [key, value] of Object.entries(error.headers)) {
-                    if (value !== undefined) {
-                      res.setHeader(key, value);
-                    }
-                  }
-                }
-                
-                // Send the response body or a default message
-                const body = error.body || `Error ${error.status}`;
-                return res.send(body);
-              } catch (responseError) {
-                console.error('Error creating response:', responseError);
-                return res.status(500).send('Internal Server Error');
-              }
-            } else {
-              console.log('Headers already sent, cannot fix response');
-            }
-          }
-          
-          // For other errors, pass to next error handler
-          return next(error);
-        }
-      };
+    // Create Remix handler that wraps the Express adapter
+    const remix = createRequestHandler({
+      build,
+      mode: process.env.NODE_ENV || 'production'
+    });
+    
+    // Capture the original response methods to modify
+    const originalEnd = res.end;
+    const originalSetHeader = res.setHeader;
+    const originalStatus = res.status;
+    
+    // Override Express response methods to handle null/undefined values
+    res.setHeader = function(name, value) {
+      if (name && value !== undefined) {
+        return originalSetHeader.call(this, name, value);
+      }
+      return this;
     };
     
-    // Use our custom handler implementation
-    return customRequestHandler({
-      build,
-      mode: process.env.NODE_ENV || 'production',
-    })(req, res, next);
+    res.status = function(code) {
+      if (code && !isNaN(code)) {
+        return originalStatus.call(this, code);
+      }
+      return this;
+    };
     
+    res.end = function(data, encoding) {
+      try {
+        return originalEnd.call(this, data, encoding);
+      } catch (endError) {
+        console.error('Error in res.end:', endError);
+        if (!res.headersSent) {
+          originalStatus.call(this, 500);
+          originalEnd.call(this, 'Internal Server Error');
+        }
+      }
+    };
+    
+    // Execute the Remix handler with our patched response
+    try {
+      await remix(req, res, (err) => {
+        if (err) {
+          console.error('Error from Remix handler:', err);
+          if (!res.headersSent) {
+            res.status(500).send('Internal Server Error');
+          }
+          return;
+        }
+        next();
+      });
+    } catch (handlerError) {
+      console.error('Caught error from Remix handler execution:', handlerError);
+      
+      // If it has a status property, it might be a Response-like object
+      if (handlerError && typeof handlerError.status === 'number') {
+        // Don't try to modify headers if they're already sent
+        if (!res.headersSent) {
+          try {
+            res.status(handlerError.status || 500);
+            if (handlerError.headers) {
+              Object.entries(handlerError.headers).forEach(([key, value]) => {
+                if (value !== undefined) {
+                  res.setHeader(key, value);
+                }
+              });
+            }
+            const body = handlerError.body || `Error ${handlerError.status}`;
+            res.send(body);
+            return;
+          } catch (responseError) {
+            console.error('Error creating error response:', responseError);
+          }
+        }
+      }
+      
+      // Default error handling if all else fails
+      if (!res.headersSent) {
+        res.status(500).send('Internal Server Error');
+      }
+    }
   } catch (error) {
     console.error('Error handling request:', error);
     if (!res.headersSent) {
