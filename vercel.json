@@ -1,7 +1,7 @@
 {
   "version": 2,
-  "buildCommand": "remix build",
-  "devCommand": "remix dev",
+  "buildCommand": "npx remix build",
+  "devCommand": "npx remix dev",
   "installCommand": "npm install",
   "outputDirectory": "public",
   "rewrites": [
