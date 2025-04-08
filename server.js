@@ -40,6 +40,44 @@ let totalConnections = 0;
 const startTime = Date.now(); // Use Date.now() for consistency
 let leaderboard = loadLeaderboard() || [];
 
+// Function to check if build directory exists and create it if needed
+const ensureBuildDirectory = () => {
+  const buildDir = path.join(__dirname, 'build');
+  
+  try {
+    if (!fs.existsSync(buildDir)) {
+      console.log('Build directory does not exist, creating it...');
+      fs.mkdirSync(buildDir, { recursive: true });
+    }
+    
+    // Check for index.js file in build directory
+    const indexPath = path.join(buildDir, 'index.js');
+    if (!fs.existsSync(indexPath)) {
+      console.log('Creating placeholder index.js in build directory...');
+      
+      // Create a minimal placeholder for the build file
+      // This will be replaced by the actual build in production
+      const placeholderContent = `
+export const entry = { module: {} };
+export const routes = {};
+export const assets = {};
+export const future = {};
+export const publicPath = "/build/";
+export const assetsBuildDirectory = "public/build";
+      `;
+      fs.writeFileSync(indexPath, placeholderContent);
+    }
+    
+    return true;
+  } catch (error) {
+    console.error('Error ensuring build directory exists:', error);
+    return false;
+  }
+};
+
+// Ensure build directory exists
+ensureBuildDirectory();
+
 // Create Express app
 const app = express();
 
@@ -50,10 +88,28 @@ app.use(express.static(path.join(__dirname, "public")));
 let build;
 async function getBuild() {
   if (!build) {
-    build = await import('./build/index.js');
+    try {
+      build = await import('./build/index.js');
+    } catch (error) {
+      console.error('Error importing build:', error);
+      // Create a minimal build object to prevent crashes
+      build = {
+        entry: { module: {} },
+        routes: {},
+        assets: {},
+        future: {},
+        publicPath: "/build/",
+        assetsBuildDirectory: "public/build"
+      };
+    }
   }
   return build;
 }
+
+// Add a simple healthcheck endpoint
+app.get('/health', (req, res) => {
+  res.status(200).send('OK');
+});
 
 // Create Remix request handler that loads build dynamically
 const getRequestHandler = async (req, res, next) => {
@@ -130,6 +186,27 @@ app.get('/api/rooms', (req, res) => {
   });
   console.log(`Serving ${activeRoomsData.length} active rooms`);
   res.json(activeRoomsData);
+});
+
+// Improve debugging for Vercel
+app.get('/_debug', (req, res) => {
+  try {
+    const debugInfo = {
+      nodeEnv: process.env.NODE_ENV,
+      dirname: __dirname,
+      cwd: process.cwd(),
+      buildExists: fs.existsSync(path.join(__dirname, 'build')),
+      buildIndexExists: fs.existsSync(path.join(__dirname, 'build', 'index.js')),
+      files: fs.readdirSync(__dirname),
+      buildFiles: fs.existsSync(path.join(__dirname, 'build')) 
+        ? fs.readdirSync(path.join(__dirname, 'build')) 
+        : 'build dir not found',
+      serverTime: new Date().toISOString()
+    };
+    res.json(debugInfo);
+  } catch (error) {
+    res.json({ error: error.message, stack: error.stack });
+  }
 });
 
 // Handle all requests with the Remix handler
