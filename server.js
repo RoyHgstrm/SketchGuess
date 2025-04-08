@@ -58,10 +58,25 @@ const ensureBuildDirectory = () => {
       // Create a minimal placeholder for the build file
       // This will be replaced by the actual build in production
       const placeholderContent = `
-export const entry = { module: {} };
-export const routes = {};
-export const assets = {};
-export const future = {};
+export const entry = { module: { default: () => null } };
+export const routes = {
+  root: {
+    id: "root",
+    path: "",
+    module: { default: () => null }
+  },
+  "routes/_index": {
+    id: "routes/_index",
+    path: "/",
+    parentId: "root",
+    module: { default: () => null }
+  }
+};
+export const assets = {
+  entry: { module: [""] },
+  routes: { root: { css: [] }, "routes/_index": { css: [] } }
+};
+export const future = { v2_dev: true, unstable_postcss: false, unstable_tailwind: false };
 export const publicPath = "/build/";
 export const assetsBuildDirectory = "public/build";
       `;
@@ -90,14 +105,30 @@ async function getBuild() {
   if (!build) {
     try {
       build = await import('./build/index.js');
+      console.log('Build file loaded successfully:', Object.keys(build));
     } catch (error) {
       console.error('Error importing build:', error);
-      // Create a minimal build object to prevent crashes
+      // Create a minimal build object to prevent crashes with valid routes
       build = {
-        entry: { module: {} },
-        routes: {},
-        assets: {},
-        future: {},
+        entry: { module: { default: () => null } },
+        routes: {
+          root: {
+            id: "root",
+            path: "",
+            module: { default: () => null }
+          },
+          "routes/_index": {
+            id: "routes/_index",
+            path: "/",
+            parentId: "root",
+            module: { default: () => null }
+          }
+        },
+        assets: {
+          entry: { module: [""] },
+          routes: { root: { css: [] }, "routes/_index": { css: [] } }
+        },
+        future: { v2_dev: true, unstable_postcss: false, unstable_tailwind: false },
         publicPath: "/build/",
         assetsBuildDirectory: "public/build"
       };
