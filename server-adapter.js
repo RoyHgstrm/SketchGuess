@@ -29,18 +29,39 @@ let build;
 // Create minimal placeholder build if needed
 const createPlaceholderBuild = () => {
   return {
-    entry: { module: { default: () => null } },
+    entry: { 
+      module: { 
+        default: () => null,
+        ErrorBoundary: () => null,
+        HydrateFallback: () => null,
+        Layout: ({children}) => children,
+        action: async ({request}) => new Response("OK", {status: 200, statusText: "OK"}),
+        loader: async ({request}) => ({ok: true})
+      } 
+    },
     routes: {
       root: {
         id: "root",
         path: "",
-        module: { default: () => null }
+        module: { 
+          default: () => null,
+          ErrorBoundary: () => null,
+          HydrateFallback: () => null,
+          action: async ({request}) => new Response("OK", {status: 200, statusText: "OK"}),
+          loader: async ({request}) => ({ok: true})
+        }
       },
       "routes/_index": {
         id: "routes/_index",
         path: "/",
         parentId: "root",
-        module: { default: () => null }
+        module: { 
+          default: () => null,
+          ErrorBoundary: () => null,
+          HydrateFallback: () => null,
+          action: async ({request}) => new Response("OK", {status: 200, statusText: "OK"}),
+          loader: async ({request}) => ({ok: true})
+        }
       }
     },
     assets: {
@@ -66,18 +87,39 @@ const ensureBuildDirectory = () => {
     if (!fs.existsSync(indexPath)) {
       console.log('Creating placeholder index.js in build directory...');
       const placeholderContent = `
-export const entry = { module: { default: () => null } };
+export const entry = { 
+  module: { 
+    default: () => null,
+    ErrorBoundary: () => null,
+    HydrateFallback: () => null,
+    Layout: ({children}) => children,
+    action: async ({request}) => new Response("OK", {status: 200, statusText: "OK"}),
+    loader: async ({request}) => ({ok: true})
+  } 
+};
 export const routes = {
   root: {
     id: "root",
     path: "",
-    module: { default: () => null }
+    module: { 
+      default: () => null,
+      ErrorBoundary: () => null,
+      HydrateFallback: () => null,
+      action: async ({request}) => new Response("OK", {status: 200, statusText: "OK"}),
+      loader: async ({request}) => ({ok: true})
+    }
   },
   "routes/_index": {
     id: "routes/_index",
     path: "/",
     parentId: "root",
-    module: { default: () => null }
+    module: { 
+      default: () => null,
+      ErrorBoundary: () => null,
+      HydrateFallback: () => null,
+      action: async ({request}) => new Response("OK", {status: 200, statusText: "OK"}),
+      loader: async ({request}) => ({ok: true})
+    }
   }
 };
 export const assets = {
@@ -175,18 +217,86 @@ const getRequestHandler = async (req, res, next) => {
       }
     }
     
-    // Create handler with loaded build
-    const handler = createRequestHandler({
+    // Create Remix handler
+    const remixHandler = createRequestHandler({
       build,
       mode: process.env.NODE_ENV || 'production',
     });
     
-    return handler(req, res, next);
+    // Call handler with additional error handling for statusText issues
+    return remixHandler(req, res, next).catch(error => {
+      console.error('Remix handler error:', error);
+      
+      // If the error looks like a Response object without statusText
+      if (error && typeof error.status === 'number' && !error.statusText) {
+        // Create a proper Response object with statusText
+        const statusText = getStatusText(error.status);
+        const newResponse = new Response(error.body || '', {
+          status: error.status,
+          statusText: statusText,
+          headers: error.headers
+        });
+        return newResponse;
+      }
+      
+      // Otherwise rethrow the error
+      throw error;
+    });
   } catch (error) {
     console.error('Error handling request:', error);
     res.status(500).send('Internal Server Error');
   }
 };
+
+// Helper function to get status text for a status code
+function getStatusText(status) {
+  const statusTexts = {
+    100: 'Continue',
+    101: 'Switching Protocols',
+    200: 'OK',
+    201: 'Created',
+    202: 'Accepted',
+    203: 'Non-Authoritative Information',
+    204: 'No Content',
+    205: 'Reset Content',
+    206: 'Partial Content',
+    300: 'Multiple Choices',
+    301: 'Moved Permanently',
+    302: 'Found',
+    303: 'See Other',
+    304: 'Not Modified',
+    305: 'Use Proxy',
+    307: 'Temporary Redirect',
+    400: 'Bad Request',
+    401: 'Unauthorized',
+    402: 'Payment Required',
+    403: 'Forbidden',
+    404: 'Not Found',
+    405: 'Method Not Allowed',
+    406: 'Not Acceptable',
+    407: 'Proxy Authentication Required',
+    408: 'Request Timeout',
+    409: 'Conflict',
+    410: 'Gone',
+    411: 'Length Required',
+    412: 'Precondition Failed',
+    413: 'Payload Too Large',
+    414: 'URI Too Long',
+    415: 'Unsupported Media Type',
+    416: 'Range Not Satisfiable',
+    417: 'Expectation Failed',
+    418: "I'm a teapot",
+    426: 'Upgrade Required',
+    500: 'Internal Server Error',
+    501: 'Not Implemented',
+    502: 'Bad Gateway',
+    503: 'Service Unavailable',
+    504: 'Gateway Timeout',
+    505: 'HTTP Version Not Supported'
+  };
+  
+  return statusTexts[status] || 'Unknown Status';
+}
 
 // Handle WebSocket upgrade
 server.on('upgrade', (request, socket, head) => {
