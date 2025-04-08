@@ -869,6 +869,8 @@ export function handleGuess(ws, data, rooms) {
   // --- Process Valid Guess ---
   player.lastMessageTime = now; // Update last message time *after* validation
   
+  // Log the current word and the player's guess for debugging
+  console.log(`[WORD TO GUESS]: "${room.currentWord}"`);
   console.log(`Player ${player.name} guessed: ${guess}`);
   
   if (player.hasGuessedCorrectly || player.correctGuess) {
@@ -881,6 +883,28 @@ export function handleGuess(ws, data, rooms) {
     console.error(`No current word found for room ${room.id}`);
     return;
   }
+
+  // Normalize both the guess and current word for comparison
+  const normalizeString = (str) => str.toLowerCase().replace(/\s+/g, '');
+  const normalizedGuess = normalizeString(guess);
+  const normalizedWord = normalizeString(currentWord);
+  
+  // Check for exact match (case and space insensitive)
+  const isCorrect = normalizedGuess === normalizedWord;
+  
+  // Check for partial match (if not exact match)
+  let partialMatch = false;
+  let matchedChars = 0;
+  if (!isCorrect) {
+    // Count matching characters in the same positions
+    for (let i = 0; i < Math.min(normalizedGuess.length, normalizedWord.length); i++) {
+      if (normalizedGuess[i] === normalizedWord[i]) {
+        matchedChars++;
+      }
+    }
+    // Consider it a partial match if at least 50% of the characters match
+    partialMatch = matchedChars >= Math.ceil(normalizedWord.length * 0.5);
+  }
   
   const calculateScore = () => {
     const baseScore = 100;
@@ -890,7 +914,6 @@ export function handleGuess(ws, data, rooms) {
     return baseScore + timeBonus;
   };
   
-  const isCorrect = guess === currentWord;
   if (isCorrect) {
     // ... (Correct guess logic remains the same) ...
     player.score = (player.score || 0) + calculateScore();
@@ -905,12 +928,11 @@ export function handleGuess(ws, data, rooms) {
             room.currentDrawer.ws.send(JSON.stringify({ type: 'system', content: `+25 points for ${player.name} guessing your drawing!` }));
         }
     }
-  broadcastPlayerList(room);
+    broadcastPlayerList(room);
     if (checkAllPlayersGuessed(room)) {
         console.log(`All players have guessed correctly in room ${room.id}. Ending round early.`);
         setTimeout(() => { endRound(room); }, 1000);
     }
-
   } else {
     // Incorrect Guess Logic:
     
@@ -932,11 +954,14 @@ export function handleGuess(ws, data, rooms) {
         playerName: player.name, 
         content: guess, // Show their actual guess
         timestamp: Date.now(),
-        messageType: 'incorrect_guess_self' // Special type for self
+        messageType: partialMatch ? 'partial_guess' : 'incorrect_guess_self', // Special type for partial matches
+        partialMatch: partialMatch,
+        matchedChars: matchedChars,
+        totalChars: normalizedWord.length
       }));
     }
     
-    console.log(`Player ${player.name} guessed incorrectly.`);
+    console.log(`Player ${player.name} guessed incorrectly. ${partialMatch ? `Partial match: ${matchedChars}/${normalizedWord.length} characters correct.` : ''}`);
   }
 }
 

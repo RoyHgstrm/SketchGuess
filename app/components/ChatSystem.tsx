@@ -136,7 +136,8 @@ const ChatSystem: React.FC<ChatSystemProps> = ({ darkMode }) => {
                 className={`p-1 xs:p-2 rounded-lg text-[10px] xs:text-xs sm:text-sm animate-fade-in ${
                   msg.type === 'system' ? 'bg-gray-600/20 text-center' :
                   msg.type === 'correct' ? 'bg-green-500/20 border-l-2 xs:border-l-4 border-green-500' :
-                  msg.type === 'incorrect' ? 'bg-red-500/20' :
+                  msg.type === 'partial_guess' ? 'bg-yellow-500/20 border-l-2 xs:border-l-4 border-yellow-500' :
+                  msg.type === 'incorrect_guess_self' ? 'bg-red-500/20' :
                   'bg-blue-500/20'
                 }`}
               >
@@ -144,7 +145,8 @@ const ChatSystem: React.FC<ChatSystemProps> = ({ darkMode }) => {
                   <div className="flex items-center space-x-1 xs:space-x-1.5 mb-0.5">
                     <span className={`font-semibold ${
                       msg.type === 'correct' ? 'text-green-400' :
-                      msg.type === 'incorrect' ? 'text-red-400' :
+                      msg.type === 'partial_guess' ? 'text-yellow-400' :
+                      msg.type === 'incorrect_guess_self' ? 'text-red-400' :
                       'text-blue-400'
                     }`}>
                       {msg.playerName}
@@ -155,9 +157,17 @@ const ChatSystem: React.FC<ChatSystemProps> = ({ darkMode }) => {
                   </div>
                 )}
                 <div 
-                  className={`${msg.type === 'system' ? 'text-gray-400 italic' : ''} break-words overflow-wrap-anywhere`}
+                  className={`${
+                    msg.type === 'system' ? 'text-gray-400 italic' : 
+                    msg.type === 'partial_guess' ? 'text-yellow-400' : ''
+                  } break-words overflow-wrap-anywhere`}
                 >
                   {msg.content}
+                  {msg.type === 'partial_guess' && (
+                    <div className="text-[9px] xs:text-[10px] text-yellow-500 mt-1">
+                      {msg.matchedChars}/{msg.totalChars} characters correct
+                    </div>
+                  )}
                 </div>
               </div>
             ))

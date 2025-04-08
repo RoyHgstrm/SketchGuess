@@ -25,10 +25,14 @@ interface GameState {
 
 interface ChatMessage {
   id: string;
-  type: 'system' | 'guess' | 'correct' | 'incorrect';
+  type: 'system' | 'guess' | 'correct' | 'incorrect' | 'partial_guess' | 'incorrect_guess_self';
   playerName: string;
   content: string;
   timestamp: number;
+  messageType?: string;
+  partialMatch?: boolean;
+  matchedChars?: number;
+  totalChars?: number;
 }
 
 interface DrawingData {
