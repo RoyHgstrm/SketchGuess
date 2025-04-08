@@ -5,7 +5,12 @@
       "src": "server.js",
       "use": "@vercel/node",
       "config": {
-        "includeFiles": ["build/**", "public/**"]
+        "includeFiles": [
+          "build/**", 
+          "public/**", 
+          "websocket-server.js",
+          "websocket-server-vercel.js"
+        ]
       }
     }
   ],

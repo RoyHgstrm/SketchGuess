@@ -6,7 +6,6 @@ import { WebSocketServer, WebSocket } from 'ws';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs';
-import * as build from '@remix-run/dev/server-build';
 import { createWebSocketHandler } from "./websocket-server-vercel.js";
 
 // Import WebSocket server logic directly
@@ -47,11 +46,28 @@ const app = express();
 // Serve static files from public directory
 app.use(express.static(path.join(__dirname, "public")));
 
-// Create Remix request handler
-const requestHandler = createRequestHandler({
-  build,
-  mode: process.env.NODE_ENV
-});
+// Create dynamically loaded request handler
+let build;
+async function getBuild() {
+  if (!build) {
+    build = await import('./build/index.js');
+  }
+  return build;
+}
+
+// Create Remix request handler that loads build dynamically
+const getRequestHandler = async (req, res, next) => {
+  try {
+    const build = await getBuild();
+    return createRequestHandler({
+      build,
+      mode: process.env.NODE_ENV
+    })(req, res, next);
+  } catch (error) {
+    console.error('Error handling request:', error);
+    res.status(500).send('Internal Server Error');
+  }
+};
 
 // Create HTTP server
 const server = http.createServer(app);
@@ -117,7 +133,13 @@ app.get('/api/rooms', (req, res) => {
 });
 
 // Handle all requests with the Remix handler
-app.all("*", requestHandler);
+app.all("*", async (req, res, next) => {
+  try {
+    await getRequestHandler(req, res, next);
+  } catch (error) {
+    next(error);
+  }
+});
 
 // WebSocket connection handling directly in server.js
 wss.on('connection', (ws, req) => {
