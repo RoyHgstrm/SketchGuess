@@ -127,25 +127,23 @@ export const WebSocketContext = createContext<WebSocketContextType>({
 // Update the getWebSocketURL function to better handle different environments
 const getWebSocketURL = (roomId: string) => {
   try {
-    // --- DEVELOPMENT --- 
-    if (process.env.NODE_ENV === 'development' && typeof window !== 'undefined') {
-      // Use the window location's hostname and port 3000 (since both HTTP and WS are on same port now)
-      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const host = window.location.hostname;
-      const url = `${protocol}//${host}:3000`;
-      console.log("Using WebSocket URL from window location:", url);
-      return `${url}?roomId=${encodeURIComponent(roomId)}`;
-    }
-
-    // --- PRODUCTION / OTHER --- 
-    // For production, always derive from current window location
+    // Get window location if available
     if (typeof window !== 'undefined') {
+      // Determine the WebSocket protocol based on the page protocol
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
       const host = window.location.hostname;
-      // Use the same port as the web page is served from
-      const port = window.location.port;
-      const url = `${protocol}//${host}${port ? `:${port}` : ''}`;
-      console.log("Using WebSocket URL derived from window location:", url);
+      
+      // For Vercel deployments, we need to use the same domain without a port
+      if (host.includes('vercel.app') || !host.includes('localhost')) {
+        const url = `${protocol}//${host}`;
+        console.log("Using WebSocket URL for production:", url);
+        return `${url}?roomId=${encodeURIComponent(roomId)}`;
+      }
+      
+      // For local development with a port
+      const port = window.location.port || '3000';
+      const url = `${protocol}//${host}:${port}`;
+      console.log("Using WebSocket URL for development:", url);
       return `${url}?roomId=${encodeURIComponent(roomId)}`;
     }
 
