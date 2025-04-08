@@ -6,6 +6,8 @@ import { WebSocketServer, WebSocket } from 'ws';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs';
+import * as build from '@remix-run/dev/server-build';
+import { createWebSocketHandler } from "./websocket-server-vercel.js";
 
 // Import WebSocket server logic directly
 import { 
@@ -42,12 +44,14 @@ let leaderboard = loadLeaderboard() || [];
 // Create Express app
 const app = express();
 
-// Handle asset requests
-app.use(
-  '/build',
-  express.static('public/build', { immutable: true, maxAge: '1y' })
-);
-app.use(express.static('public', { maxAge: '1h' }));
+// Serve static files from public directory
+app.use(express.static(path.join(__dirname, "public")));
+
+// Create Remix request handler
+const requestHandler = createRequestHandler({
+  build,
+  mode: process.env.NODE_ENV
+});
 
 // Create HTTP server
 const server = http.createServer(app);
@@ -112,13 +116,8 @@ app.get('/api/rooms', (req, res) => {
   res.json(activeRoomsData);
 });
 
-// Handle Remix requests
-app.all(
-  '*',
-  createRequestHandler({
-    build: await import('./build/index.js')
-  })
-);
+// Handle all requests with the Remix handler
+app.all("*", requestHandler);
 
 // WebSocket connection handling directly in server.js
 wss.on('connection', (ws, req) => {
@@ -198,18 +197,14 @@ wss.on('connection', (ws, req) => {
   });
 });
 
+// Set up WebSocket server on the same HTTP server
+createWebSocketHandler(server);
+
 // Start server
-const PORT = process.env.PORT || 3000; // Use the environment variable or default to 3000
-if (!PORT) {
-  console.error("FATAL ERROR: PORT environment variable is not set.");
-  process.exit(1); // Exit if the PORT variable is missing
-}
-
-const HOST = process.env.HOST || '0.0.0.0';
-
-server.listen(Number(PORT), HOST, () => { // Ensure PORT is treated as a number
-  console.log(`Integrated server running on ${HOST}:${PORT}`);
-  console.log(`WebSocket server is running on the same port (${PORT})`);
+const port = process.env.PORT || 3000;
+server.listen(port, () => {
+  console.log(`Server started on port ${port}`);
+  console.log(`WebSocket server is also running on port ${port}`);
   
   // Handle graceful shutdown
   process.on('SIGTERM', () => {

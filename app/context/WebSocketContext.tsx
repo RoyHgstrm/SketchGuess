@@ -133,9 +133,10 @@ const getWebSocketURL = (roomId: string) => {
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
       const host = window.location.hostname;
       
-      // For Vercel deployments, we need to use the same domain without a port
+      // For Vercel deployments, we need to use the same domain
       if (host.includes('vercel.app') || !host.includes('localhost')) {
-        const url = `${protocol}//${host}`;
+        // For production, use the same domain and port as the application
+        const url = `${protocol}//${window.location.host}`;
         console.log("Using WebSocket URL for production:", url);
         return `${url}?roomId=${encodeURIComponent(roomId)}`;
       }

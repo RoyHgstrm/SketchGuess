@@ -15,7 +15,8 @@
     "start:all": "concurrently \"npm run start\" \"npm run websocket\"",
     "start:all:prod": "concurrently \"npm run start:prod\" \"npm run websocket:prod\"",
     "dev:all": "concurrently \"npm:dev\" \"npm:websocket:dev\"",
-    "typecheck": "tsc"
+    "typecheck": "tsc",
+    "postinstall": "remix setup node"
   },
   "dependencies": {
     "@emotion/react": "^11.14.0",
