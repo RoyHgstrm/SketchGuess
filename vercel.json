@@ -1,12 +1,10 @@
 {
   "version": 2,
-  "buildCommand": "npx remix build",
-  "devCommand": "npx remix dev",
-  "installCommand": "npm install",
-  "outputDirectory": "public",
-  "framework": "remix",
-  "rewrites": [
-    { "source": "/(.*)", "destination": "/server.js" }
+  "builds": [
+    { "src": "server-adapter.js", "use": "@vercel/node" }
+  ],
+  "routes": [
+    { "src": "/(.*)", "dest": "/server-adapter.js" }
   ],
   "headers": [
     {
